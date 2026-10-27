@@ -1,14 +1,28 @@
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   CheckCircle2, AlertCircle, Printer, 
   Plus, ArrowUpRight, ArrowDownRight,
   Building, X, Search, Filter, MessageCircle, 
-  Lock, LogOut, KeyRound, Smartphone, Radio, BatteryCharging,
+  Lock, LogOut, KeyRound, Smartphone, Radio,
   PieChart as PieIcon, RefreshCw, Activity
 } from 'lucide-react';
 import { MONTHS, parseResidents, Resident } from './initialData';
 
 export default function App() {
+  // --- JAM DINAMIS REAL-TIME ---
+  const [currentTime, setCurrentTime] = useState(() => {
+    const now = new Date();
+    return now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace(':', '.');
+  });
+
+  useEffect(() => {
+    const timer = setInterval(() => {
+      const now = new Date();
+      setCurrentTime(now.toLocaleTimeString('id-ID', { hour: '2-digit', minute: '2-digit' }).replace(':', '.'));
+    }, 1000);
+    return () => clearInterval(timer);
+  }, []);
+
   // --- KEAMANAN SERVER-SIDE TOKEN ---
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem('rt2_session_token'));
   const [currentUser, setCurrentUser] = useState<{ role: string; name: string } | null>(() => {
@@ -18,7 +32,7 @@ export default function App() {
 
   // Form Login State
   const [loginRole, setLoginRole] = useState<'bendahara' | 'ketua_rt' | 'admin'>('bendahara');
-  const [loginPin, setLoginPin] = useState('');
+  const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
@@ -58,21 +72,20 @@ export default function App() {
     return phone;
   };
 
-  // --- LOGIKA LOGIN DENGAN GENERASI TOKEN SERVER-SIDE ---
+  // --- AUTENTIKASI PENGURUS (PASSWORD TERVERIFIKASI) ---
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsAuthenticating(true);
     setLoginError('');
 
-    // Simulasi verifikasi Server-Side Hash PIN & Token Generation
     setTimeout(() => {
-      const pinMap: { [key: string]: string } = {
-        admin: '202602',
-        bendahara: '123456',
-        ketua_rt: '654321',
+      const passwordMap: { [key: string]: string } = {
+        admin: 'Bismillah#123',
+        bendahara: 'Bismillah#123',
+        ketua_rt: 'Bismillah#123',
       };
 
-      if (pinMap[loginRole] === loginPin) {
+      if (passwordMap[loginRole] === loginPassword.trim()) {
         const generatedToken = `token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
         const userData = {
           role: loginRole,
@@ -83,13 +96,13 @@ export default function App() {
         localStorage.setItem('rt2_user_session', JSON.stringify(userData));
         setSessionToken(generatedToken);
         setCurrentUser(userData);
-        setLoginPin('');
+        setLoginPassword('');
         setActiveTab('dashboard');
       } else {
-        setLoginError('PIN Keamanan Salah! Periksa kembali kode akses Anda.');
+        setLoginError('Password tidak sesuai. Silakan coba kembali.');
       }
       setIsAuthenticating(false);
-    }, 450);
+    }, 400);
   };
 
   const handleLogout = () => {
@@ -100,7 +113,7 @@ export default function App() {
     setActiveTab('publik');
   };
 
-  // --- KALKULASI STATISTIK 88 WARGA & KELOMPOK DAWIS ---
+  // --- STATISTIK & KALKULASI 88 WARGA ---
   const stats = useMemo(() => {
     let totalIuranTerkumpul = 0;
     let iuranBulanIni = 0;
@@ -191,58 +204,40 @@ export default function App() {
       return;
     }
     const cleanPhone = r.phone.startsWith('0') ? '62' + r.phone.slice(1) : r.phone;
-    const msg = `Assalamu'alaikum Bpk/Ibu ${r.name}. Mengingatkan iuran ${settings.rtName} (${r.house}) periode ${settings.currentMonth} ${settings.year} sebesar ${formatRupiah(r.rate)}. Terima kasih.`;
+    const msg = `Assalamu'alaikum Bpk/Ibu ${r.name}. Mengingatkan tagihan iuran ${settings.rtName} (${r.house}) periode ${settings.currentMonth} ${settings.year} sebesar ${formatRupiah(r.rate)}. Terima kasih.`;
     window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
   return (
     <div className="min-h-screen bg-[#000000] text-slate-100 font-sans selection:bg-[#30D158] selection:text-black pb-24">
       
-      {/* 1. DYNAMIC ISLAND & iOS 27 STATUS BAR */}
+      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA */}
       <div className="sticky top-0 z-50 bg-[#000000]/85 backdrop-blur-2xl border-b border-white/[0.08] px-5 py-2.5">
         <div className="max-w-6xl mx-auto flex justify-between items-center text-xs">
-          {/* Jam & Status */}
           <div className="flex items-center gap-2 font-semibold tracking-tight text-white">
-            <span className="text-sm font-bold">06.32</span>
+            <span className="text-sm font-bold font-mono">{currentTime}</span>
             <div className="w-1.5 h-1.5 rounded-full bg-[#30D158] animate-pulse"></div>
           </div>
 
-          {/* Dynamic Island Capsule */}
-          <div className="bg-[#1C1C1E] border border-white/10 px-4 py-1 rounded-full flex items-center gap-3 shadow-2xl">
-            <div className="flex items-center gap-1.5 text-[11px] font-semibold text-emerald-400">
-              <Building className="w-3.5 h-3.5" />
-              <span>RT 02 TPA</span>
-            </div>
-            <div className="w-[1px] h-3 bg-white/20"></div>
-            <div className="flex items-center gap-1 text-[10px] text-slate-400 font-mono">
-              <Radio className="w-3 h-3 text-[#30D158]" />
-              <span>iOS 27.0 Online</span>
-            </div>
+          <div className="bg-[#1C1C1E] border border-white/10 px-4 py-1 rounded-full flex items-center gap-2 shadow-2xl">
+            <Building className="w-3.5 h-3.5 text-emerald-400" />
+            <span className="text-[11px] font-semibold text-emerald-400 tracking-wide">RT 02 TPA</span>
           </div>
 
-          {/* Status Baterai & Network Icon */}
-          <div className="flex items-center gap-2 text-slate-300 font-medium">
-            <span className="text-[11px] font-mono">4G</span>
-            <div className="flex items-center gap-0.5 text-xs font-bold text-[#30D158]">
-              <span>74%</span>
-              <BatteryCharging className="w-4 h-4" />
-            </div>
-          </div>
+          <div className="w-12"></div>
         </div>
       </div>
 
-      {/* 2. HEADER APPLIKE & BREADCRUMB */}
+      {/* 2. HEADER APLIKASI */}
       <header className="max-w-6xl mx-auto px-5 pt-5 pb-3">
         <div className="flex flex-wrap justify-between items-center gap-4">
           <div>
-            <p className="text-xs uppercase tracking-widest text-[#30D158] font-black">Financial OS v27.0</p>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white flex items-center gap-2">
+            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
               {settings.rtName}
             </h1>
             <p className="text-xs text-slate-400 mt-0.5">Sistem Kas Mandiri • Transparan & Akuntabel</p>
           </div>
 
-          {/* Autentikasi Pill Selector */}
           <div className="flex items-center gap-2">
             {sessionToken ? (
               <div className="flex items-center gap-2 bg-[#1C1C1E]/90 border border-white/10 p-1.5 rounded-2xl shadow-inner">
@@ -251,7 +246,7 @@ export default function App() {
                 </div>
                 <div className="pr-2 text-left">
                   <p className="text-[11px] font-bold text-white capitalize leading-tight">{currentUser?.name}</p>
-                  <span className="text-[9px] text-[#30D158] font-mono uppercase tracking-wider">Akses {currentUser?.role}</span>
+                  <span className="text-[9px] text-[#30D158] font-mono uppercase tracking-wider">Akses {currentUser?.role.replace('_', ' ')}</span>
                 </div>
                 <button
                   onClick={handleLogout}
@@ -273,7 +268,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* 3. NAVIGATION SQUIRCLE PILL BAR */}
+      {/* 3. MENU NAVIGASI */}
       <nav className="max-w-6xl mx-auto px-5 my-3">
         <div className="bg-[#1C1C1E]/80 border border-white/10 p-1.5 rounded-[22px] backdrop-blur-xl flex gap-1.5 overflow-x-auto shadow-2xl">
           {sessionToken && (
@@ -319,10 +314,10 @@ export default function App() {
         </div>
       </nav>
 
-      {/* 4. MAIN BENTO CONTAINER */}
+      {/* 4. KONTEN UTAMA */}
       <main className="max-w-6xl mx-auto px-5 mt-4 space-y-6">
 
-        {/* --- FORM LOGIN SERVER-SIDE DIALOG JIKA BELUM TERAUTENTIKASI & INGIN MASUK MENU ADMIN --- */}
+        {/* DIALOG LOGIN PENGURUS */}
         {!sessionToken && activeTab !== 'publik' && (
           <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-8 max-w-md mx-auto shadow-2xl text-center relative overflow-hidden backdrop-blur-2xl">
             <div className="w-14 h-14 bg-gradient-to-tr from-emerald-600 to-[#30D158] rounded-[22px] mx-auto flex items-center justify-center text-black mb-4 shadow-xl">
@@ -342,23 +337,22 @@ export default function App() {
                       onClick={() => setLoginRole(r)}
                       className={`py-2 rounded-[16px] text-xs font-bold capitalize transition border ${loginRole === r ? 'bg-[#30D158] text-black border-[#30D158]' : 'bg-[#2C2C2E] text-slate-300 border-white/10'}`}
                     >
-                      {r.replace('_', ' ')}
+                      {r === 'ketua_rt' ? 'Ketua RT' : r}
                     </button>
                   ))}
                 </div>
               </div>
 
               <div>
-                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Kode PIN Pengurus</label>
+                <label className="block text-[11px] font-bold uppercase tracking-wider text-slate-400 mb-1.5">Password</label>
                 <input
                   type="password"
-                  placeholder="Masukkan 6-digit PIN"
-                  value={loginPin}
-                  onChange={(e) => setLoginPin(e.target.value)}
+                  placeholder="Masukkan Password"
+                  value={loginPassword}
+                  onChange={(e) => setLoginPassword(e.target.value)}
                   className="w-full bg-[#2C2C2E] border border-white/10 rounded-[18px] px-4 py-3 text-white text-sm focus:outline-none focus:border-[#30D158] transition"
                   required
                 />
-                <p className="text-[10px] text-slate-500 mt-1">Default Demo PIN: Bendahara (123456) • Ketua RT (654321) • Admin (202602)</p>
               </div>
 
               {loginError && (
@@ -379,15 +373,11 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 1: DASHBOARD BENTO WIDGETS DENGAN CHART BULAT iOS 27 --- */}
+        {/* TAB DASHBOARD */}
         {activeTab === 'dashboard' && sessionToken && (
           <div className="space-y-5">
-            
-            {/* WIDGET HERO: SALDO UTAMA + CIRCULAR BATTERY GAUGE */}
             <div className="bg-[#1C1C1E]/90 border border-white/10 rounded-[32px] p-6 shadow-2xl relative overflow-hidden backdrop-blur-xl">
               <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-                
-                {/* Saldo Angka Besar */}
                 <div className="md:col-span-2 space-y-2">
                   <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-xs font-bold">
                     <Activity className="w-3.5 h-3.5" />
@@ -402,29 +392,12 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* iOS 27 BATTERY-STYLE CIRCULAR GAUGES (SESUAI GAMBAR REFERENSI) */}
                 <div className="bg-[#000000]/60 border border-white/10 rounded-[28px] p-4 flex items-center justify-around shadow-inner">
-                  
-                  {/* Gauge 1: Kepatuhan Total */}
                   <div className="flex flex-col items-center">
                     <div className="relative w-16 h-16 flex items-center justify-center">
                       <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                        <path
-                          className="text-[#2C2C2E]"
-                          strokeWidth="3.8"
-                          stroke="currentColor"
-                          fill="none"
-                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        />
-                        <path
-                          className="text-[#30D158]"
-                          strokeDasharray={`${stats.kepatuhanPercent}, 100`}
-                          strokeWidth="3.8"
-                          strokeLinecap="round"
-                          stroke="currentColor"
-                          fill="none"
-                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        />
+                        <path className="text-[#2C2C2E]" strokeWidth="3.8" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#30D158]" strokeDasharray={`${stats.kepatuhanPercent}, 100`} strokeWidth="3.8" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                       </svg>
                       <Smartphone className="w-5 h-5 text-white absolute" />
                     </div>
@@ -432,26 +405,11 @@ export default function App() {
                     <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Kepatuhan</span>
                   </div>
 
-                  {/* Gauge 2: Iuran Terkumpul */}
                   <div className="flex flex-col items-center">
                     <div className="relative w-16 h-16 flex items-center justify-center">
                       <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                        <path
-                          className="text-[#2C2C2E]"
-                          strokeWidth="3.8"
-                          stroke="currentColor"
-                          fill="none"
-                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        />
-                        <path
-                          className="text-[#0A84FF]"
-                          strokeDasharray={`${Math.min(100, Math.round((stats.iuranBulanIni / (stats.targetBulanIni || 1)) * 100))}, 100`}
-                          strokeWidth="3.8"
-                          strokeLinecap="round"
-                          stroke="currentColor"
-                          fill="none"
-                          d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"
-                        />
+                        <path className="text-[#2C2C2E]" strokeWidth="3.8" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#0A84FF]" strokeDasharray={`${Math.min(100, Math.round((stats.iuranBulanIni / (stats.targetBulanIni || 1)) * 100))}, 100`} strokeWidth="3.8" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                       </svg>
                       <Radio className="w-5 h-5 text-white absolute" />
                     </div>
@@ -460,15 +418,11 @@ export default function App() {
                     </span>
                     <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Bulan Ini</span>
                   </div>
-
                 </div>
               </div>
             </div>
 
-            {/* BENTO GRID: KARTU INDIKATOR & PIE CHART INSIGHT DAWIS */}
             <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              
-              {/* KOLOM KIRI: PIE / DONUT CHART KEPATUHAN TIAP DAWIS */}
               <div className="bg-[#1C1C1E] border border-white/10 rounded-[30px] p-6 shadow-xl space-y-4">
                 <div className="flex justify-between items-center">
                   <h3 className="font-extrabold text-sm text-white flex items-center gap-1.5">
@@ -477,20 +431,13 @@ export default function App() {
                   <span className="text-[10px] bg-[#2C2C2E] px-2 py-0.5 rounded-full text-slate-300 font-mono">Real-time</span>
                 </div>
 
-                {/* Visual Donut Multi-Layer */}
                 <div className="flex items-center justify-center py-2">
                   <div className="relative w-36 h-36 flex items-center justify-center">
                     <svg className="w-full h-full transform -rotate-90" viewBox="0 0 42 42">
                       <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#2C2C2E" strokeWidth="6" />
-                      {/* Dawis 1: Green */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#30D158" strokeWidth="6"
-                        strokeDasharray="33 67" strokeDashoffset="0" strokeLinecap="round" />
-                      {/* Dawis 2: Blue */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#0A84FF" strokeWidth="6"
-                        strokeDasharray="27 73" strokeDashoffset="-33" strokeLinecap="round" />
-                      {/* Dawis 3: Orange */}
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#FF9F0A" strokeWidth="6"
-                        strokeDasharray="40 60" strokeDashoffset="-60" strokeLinecap="round" />
+                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#30D158" strokeWidth="6" strokeDasharray="33 67" strokeDashoffset="0" strokeLinecap="round" />
+                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#0A84FF" strokeWidth="6" strokeDasharray="27 73" strokeDashoffset="-33" strokeLinecap="round" />
+                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#FF9F0A" strokeWidth="6" strokeDasharray="40 60" strokeDashoffset="-60" strokeLinecap="round" />
                     </svg>
                     <div className="text-center absolute">
                       <span className="text-xl font-black text-white">{stats.kkLunasBulanIni}</span>
@@ -499,39 +446,31 @@ export default function App() {
                   </div>
                 </div>
 
-                {/* Legend Dawis */}
                 <div className="space-y-2 text-xs">
                   <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-[#30D158]"></div>
                       <span className="font-semibold text-white">Dawis 1</span>
                     </div>
-                    <span className="font-mono text-slate-300 font-bold">
-                      {stats.dawisStats['Dawis 1'].lunasKK}/{stats.dawisStats['Dawis 1'].totalKK} KK
-                    </span>
+                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 1'].lunasKK}/{stats.dawisStats['Dawis 1'].totalKK} KK</span>
                   </div>
                   <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-[#0A84FF]"></div>
                       <span className="font-semibold text-white">Dawis 2</span>
                     </div>
-                    <span className="font-mono text-slate-300 font-bold">
-                      {stats.dawisStats['Dawis 2'].lunasKK}/{stats.dawisStats['Dawis 2'].totalKK} KK
-                    </span>
+                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 2'].lunasKK}/{stats.dawisStats['Dawis 2'].totalKK} KK</span>
                   </div>
                   <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
                     <div className="flex items-center gap-2">
                       <div className="w-3 h-3 rounded-full bg-[#FF9F0A]"></div>
                       <span className="font-semibold text-white">Dawis 3</span>
                     </div>
-                    <span className="font-mono text-slate-300 font-bold">
-                      {stats.dawisStats['Dawis 3'].lunasKK}/{stats.dawisStats['Dawis 3'].totalKK} KK
-                    </span>
+                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 3'].lunasKK}/{stats.dawisStats['Dawis 3'].totalKK} KK</span>
                   </div>
                 </div>
               </div>
 
-              {/* KOLOM TENGAH & KANAN: BENTO KARTU FINANSIAL */}
               <div className="md:col-span-2 grid grid-cols-2 gap-4">
                 <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-lg flex flex-col justify-between">
                   <div className="flex justify-between items-start">
@@ -589,7 +528,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 2: MATRIKS IURAN 12 BULAN ALA EXCEL --- */}
+        {/* TAB MATRIKS 12 BULAN */}
         {activeTab === 'matriks' && sessionToken && (
           <div className="space-y-4">
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-4 flex flex-wrap justify-between items-center gap-3 shadow-xl">
@@ -685,7 +624,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 3: BUKU KAS OPERASIONAL --- */}
+        {/* TAB BUKU KAS */}
         {activeTab === 'kas' && sessionToken && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
@@ -726,7 +665,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 4: MASTER DATA 88 KK --- */}
+        {/* TAB MASTER 88 KK */}
         {activeTab === 'warga' && sessionToken && (
           <div className="space-y-4">
             <h2 className="text-xl font-extrabold text-white">Master Data 88 Kepala Keluarga</h2>
@@ -759,7 +698,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 5: CETAK LAPORAN RESMI A4 --- */}
+        {/* TAB CETAK LAPORAN */}
         {activeTab === 'laporan' && sessionToken && (
           <div className="space-y-4">
             <div className="flex justify-between items-center no-print">
@@ -817,7 +756,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- VIEW 6: PORTAL TRANSPARANSI PUBLIK (BEBAS AKSES WARGA TANPA BOCOR NOMOR WA) --- */}
+        {/* TAB PORTAL PUBLIK WARGA */}
         {activeTab === 'publik' && (
           <div className="space-y-6 max-w-2xl mx-auto">
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-8 text-center shadow-2xl relative overflow-hidden backdrop-blur-2xl">
