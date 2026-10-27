@@ -1,10 +1,10 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo } from 'react';
 import { 
-  Wallet, CheckCircle2, AlertCircle, Printer, 
-  Shield, Plus, ArrowUpRight, ArrowDownRight,
+  CheckCircle2, AlertCircle, Printer, 
+  Plus, ArrowUpRight, ArrowDownRight,
   Building, X, Search, Filter, MessageCircle, 
   Lock, LogOut, KeyRound, Smartphone, Radio, BatteryCharging,
-  PieChart as PieIcon, RefreshCw, ChevronRight, Activity
+  PieChart as PieIcon, RefreshCw, Activity
 } from 'lucide-react';
 import { MONTHS, parseResidents, Resident } from './initialData';
 
