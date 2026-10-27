@@ -4,9 +4,11 @@ import {
   Plus, ArrowUpRight, ArrowDownRight,
   Building, X, Search, Filter, MessageCircle, 
   Lock, LogOut, KeyRound, Smartphone, Radio,
-  PieChart as PieIcon, RefreshCw, Activity
+  PieChart as PieIcon, RefreshCw, Activity,
+  CreditCard, Calendar, User, Database, Check
 } from 'lucide-react';
 import { MONTHS, parseResidents, Resident } from './initialData';
+import { supabase } from './supabaseClient';
 
 export default function App() {
   // --- JAM DINAMIS REAL-TIME ---
@@ -23,12 +25,16 @@ export default function App() {
     return () => clearInterval(timer);
   }, []);
 
-  // --- KEAMANAN SERVER-SIDE TOKEN ---
+  // --- KEAMANAN & SESI SERVER ---
   const [sessionToken, setSessionToken] = useState<string | null>(() => localStorage.getItem('rt2_session_token'));
   const [currentUser, setCurrentUser] = useState<{ role: string; name: string } | null>(() => {
     const saved = localStorage.getItem('rt2_user_session');
     return saved ? JSON.parse(saved) : null;
   });
+
+  // Status Database Supabase
+  const [dbStatus, setDbStatus] = useState<'connected' | 'syncing' | 'offline'>('connected');
+  const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Form Login State
   const [loginRole, setLoginRole] = useState<'bendahara' | 'ketua_rt' | 'admin'>('bendahara');
@@ -36,8 +42,9 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Navigasi & View Mode
+  // Navigasi & Tampilan
   const [activeTab, setActiveTab] = useState<'dashboard' | 'matriks' | 'kas' | 'warga' | 'laporan' | 'publik'>('dashboard');
+  const [viewModeMobile, setViewModeMobile] = useState<'card' | 'table'>('card'); // Mode kartu ramah HP
 
   // Konfigurasi Lingkungan RT 02
   const [settings] = useState({
@@ -49,18 +56,27 @@ export default function App() {
     year: 2026,
   });
 
-  // 88 Warga Asli dari Excel
+  // Data 88 Warga & Transaksi Kas
   const [residents, setResidents] = useState<Resident[]>(parseResidents());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDawis, setSelectedDawis] = useState('Semua');
 
-  // Transaksi Kas Operasional
+  // Transaksi Kas (Diambil dari Supabase)
+  const [transactions, setTransactions] = useState<any[]>([
+    { id: 'trx-1', date: '2026-10-02', type: 'OUT', category: 'Keamanan & Kebersihan', amount: 3500000, desc: 'Honor Penjaga Malam & Sampah' },
+    { id: 'trx-2', date: '2026-10-15', type: 'OUT', category: 'Perawatan Lingkungan', amount: 850000, desc: 'Perbaikan Lampu Jalan Portal' }
+  ]);
+
+  // Modal State
   const [showAddTrx, setShowAddTrx] = useState(false);
   const [newTrx, setNewTrx] = useState({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
-  const [extraTransactions, setExtraTransactions] = useState([
-    { id: 'trx-1', date: '2026-10-02', type: 'OUT', category: 'Keamanan & Kebersihan', amount: 3500000, desc: 'Honor Penjaga Malam & Pengangkut Sampah' },
-    { id: 'trx-2', date: '2026-10-15', type: 'OUT', category: 'Perawatan Lingkungan', amount: 850000, desc: 'Perbaikan Lampu Jalan Portal Gang D & E' }
-  ]);
+  const [submittingTrx, setSubmittingTrx] = useState(false);
+
+  // Helper Toast Notifikasi
+  const showToast = (msg: string) => {
+    setToastMessage(msg);
+    setTimeout(() => setToastMessage(null), 3500);
+  };
 
   const formatRupiah = (val: number) => {
     return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val || 0);
@@ -72,20 +88,49 @@ export default function App() {
     return phone;
   };
 
-  // --- AUTENTIKASI PENGURUS (PASSWORD TERVERIFIKASI) ---
+  // --- AMBIL DATA KAS DARI SUPABASE SAAT LOAD ---
+  const fetchSupabaseTransactions = async () => {
+    setDbStatus('syncing');
+    try {
+      const { data, error } = await supabase
+        .from('transactions')
+        .select('*')
+        .order('created_at', { ascending: false });
+
+      if (error) throw error;
+
+      if (data && data.length > 0) {
+        const formatted = data.map(item => ({
+          id: item.id,
+          date: item.date || item.created_at?.split('T')[0],
+          type: item.type,
+          category: item.category,
+          amount: Number(item.amount),
+          desc: item.description,
+          recorded_by: item.recorded_by
+        }));
+        setTransactions(formatted);
+      }
+      setDbStatus('connected');
+    } catch (err: any) {
+      console.warn('Gagal koneksi Supabase, menggunakan data lokal:', err.message);
+      setDbStatus('offline');
+    }
+  };
+
+  useEffect(() => {
+    fetchSupabaseTransactions();
+  }, []);
+
+  // --- AUTENTIKASI DENGAN PASSWORD Bismillah#123 ---
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsAuthenticating(true);
     setLoginError('');
 
     setTimeout(() => {
-      const passwordMap: { [key: string]: string } = {
-        admin: 'Bismillah#123',
-        bendahara: 'Bismillah#123',
-        ketua_rt: 'Bismillah#123',
-      };
-
-      if (passwordMap[loginRole] === loginPassword.trim()) {
+      const validPass = 'Bismillah#123';
+      if (loginPassword.trim() === validPass) {
         const generatedToken = `token_${Date.now()}_${Math.random().toString(36).substring(2, 10)}`;
         const userData = {
           role: loginRole,
@@ -98,11 +143,12 @@ export default function App() {
         setCurrentUser(userData);
         setLoginPassword('');
         setActiveTab('dashboard');
+        showToast(`Selamat datang, ${userData.name}!`);
       } else {
-        setLoginError('Password tidak sesuai. Silakan coba kembali.');
+        setLoginError('Password tidak sesuai! Periksa kembali.');
       }
       setIsAuthenticating(false);
-    }, 400);
+    }, 350);
   };
 
   const handleLogout = () => {
@@ -111,9 +157,137 @@ export default function App() {
     setSessionToken(null);
     setCurrentUser(null);
     setActiveTab('publik');
+    showToast('Berhasil logout.');
   };
 
-  // --- STATISTIK & KALKULASI 88 WARGA ---
+  // --- SIMPAN PENGELUARAN / KAS KE SUPABASE ---
+  const handleSaveTransaction = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!newTrx.amount || !newTrx.description) return;
+    setSubmittingTrx(true);
+
+    const nominal = Number(newTrx.amount);
+    const dateToday = new Date().toISOString().split('T')[0];
+    const trxNumber = `KAS-${newTrx.type}-${Date.now().toString().slice(-6)}`;
+
+    // 1. Simpan ke Supabase
+    try {
+      const { data, error } = await supabase.from('transactions').insert([{
+        transaction_number: trxNumber,
+        date: dateToday,
+        type: newTrx.type,
+        category: newTrx.category,
+        amount: nominal,
+        description: newTrx.description,
+        recorded_by: currentUser?.name || 'Pengurus',
+        status: 'VALID'
+      }]).select();
+
+      if (error) throw error;
+
+      // 2. Perbarui state lokal
+      const newEntry = {
+        id: data ? data[0].id : `trx-${Date.now()}`,
+        date: dateToday,
+        type: newTrx.type,
+        category: newTrx.category,
+        amount: nominal,
+        desc: newTrx.description,
+        recorded_by: currentUser?.name || 'Pengurus'
+      };
+
+      setTransactions([newEntry, ...transactions]);
+      setShowAddTrx(false);
+      setNewTrx({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
+      showToast('Transaksi kas berhasil tersimpan di Supabase!');
+    } catch (err: any) {
+      alert(`Gagal menyimpan ke Supabase: ${err.message}. Periksa koneksi internet.`);
+    } finally {
+      setSubmittingTrx(false);
+    }
+  };
+
+  // --- SIMPAN PEMBAYARAN IURAN KE SUPABASE & STATE ---
+  const handleQuickPay = async (resId: string, month: string) => {
+    if (!sessionToken) {
+      alert('Akses Ditolak: Anda wajib login sebagai Pengurus untuk mencatat kas!');
+      return;
+    }
+    const target = residents.find(r => r.id === resId);
+    if (!target) return;
+    const currentPaid = target.payments[month] || 0;
+    const remaining = target.rate - currentPaid;
+
+    if (remaining <= 0) {
+      alert(`Iuran ${target.name} bulan ${month} sudah lunas!`);
+      return;
+    }
+
+    const input = window.prompt(`Catat pembayaran iuran ${month} untuk ${target.name} (${target.house}):`, String(remaining));
+    if (!input || isNaN(Number(input)) || Number(input) <= 0) return;
+
+    const nominal = Math.min(Number(input), remaining);
+    const dateToday = new Date().toISOString().split('T')[0];
+
+    // 1. Kirim Transaksi Kas Masuk ke Supabase
+    try {
+      const descText = `Iuran ${month} an. ${target.name} (${target.house})`;
+      const { data, error } = await supabase.from('transactions').insert([{
+        transaction_number: `IURAN-${Date.now().toString().slice(-6)}`,
+        date: dateToday,
+        type: 'IN',
+        category: 'Iuran Bulanan',
+        amount: nominal,
+        description: descText,
+        recorded_by: currentUser?.name || 'Bendahara',
+        status: 'VALID'
+      }]).select();
+
+      if (error) console.warn('Supabase log:', error.message);
+
+      // 2. Update state kas masuk
+      const newKasEntry = {
+        id: data ? data[0].id : `trx-${Date.now()}`,
+        date: dateToday,
+        type: 'IN',
+        category: 'Iuran Bulanan',
+        amount: nominal,
+        desc: descText,
+        recorded_by: currentUser?.name || 'Bendahara'
+      };
+      setTransactions([newKasEntry, ...transactions]);
+
+      // 3. Update status pembayaran warga di tabel
+      setResidents(residents.map(r => {
+        if (r.id === resId) {
+          return {
+            ...r,
+            payments: {
+              ...r.payments,
+              [month]: currentPaid + nominal
+            }
+          };
+        }
+        return r;
+      }));
+
+      showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} masuk ke kas Supabase!`);
+    } catch (err: any) {
+      alert(`Peringatan: Gagal mengirim ke Supabase: ${err.message}`);
+    }
+  };
+
+  const handleSendWA = (r: Resident) => {
+    if (!r.phone || r.phone === '0') {
+      alert('Nomor telepon warga ini belum tersedia di berkas master.');
+      return;
+    }
+    const cleanPhone = r.phone.startsWith('0') ? '62' + r.phone.slice(1) : r.phone;
+    const msg = `Assalamu'alaikum Bpk/Ibu ${r.name}. Mengingatkan tagihan iuran ${settings.rtName} (${r.house}) periode ${settings.currentMonth} ${settings.year} sebesar ${formatRupiah(r.rate)}. Terima kasih.`;
+    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
+  };
+
+  // --- KALKULASI FINANSIAL REAL-TIME ---
   const stats = useMemo(() => {
     let totalIuranTerkumpul = 0;
     let iuranBulanIni = 0;
@@ -147,13 +321,16 @@ export default function App() {
       });
     });
 
-    const totalPengeluaran = extraTransactions.reduce((acc, curr) => acc + curr.amount, 0);
+    const totalPengeluaran = transactions
+      .filter(t => t.type === 'OUT')
+      .reduce((acc, curr) => acc + curr.amount, 0);
+
     const saldoAkhir = settings.initialCash + totalIuranTerkumpul - totalPengeluaran;
     const piutangBulanIni = targetBulanIni - iuranBulanIni;
     const kepatuhanPercent = kkTotalAktif > 0 ? Math.round((kkLunasBulanIni / kkTotalAktif) * 100) : 0;
 
     return { totalIuranTerkumpul, iuranBulanIni, targetBulanIni, piutangBulanIni, kkLunasBulanIni, kkTotalAktif, kepatuhanPercent, totalPengeluaran, saldoAkhir, dawisStats };
-  }, [residents, extraTransactions, settings]);
+  }, [residents, transactions, settings]);
 
   const filteredResidents = useMemo(() => {
     return residents.filter(r => {
@@ -165,93 +342,62 @@ export default function App() {
     });
   }, [residents, searchQuery, selectedDawis]);
 
-  const handleQuickPay = (resId: string, month: string) => {
-    if (!sessionToken) {
-      alert('Akses Ditolak: Anda wajib login sebagai Pengurus untuk mencatat kas!');
-      return;
-    }
-    const target = residents.find(r => r.id === resId);
-    if (!target) return;
-    const currentPaid = target.payments[month] || 0;
-    const remaining = target.rate - currentPaid;
-
-    if (remaining <= 0) {
-      alert(`Iuran ${target.name} bulan ${month} sudah lunas!`);
-      return;
-    }
-
-    const input = window.prompt(`Catat pembayaran iuran ${month} untuk ${target.name} (${target.house}):`, String(remaining));
-    if (!input || isNaN(Number(input)) || Number(input) <= 0) return;
-
-    const nominal = Math.min(Number(input), remaining);
-    setResidents(residents.map(r => {
-      if (r.id === resId) {
-        return {
-          ...r,
-          payments: {
-            ...r.payments,
-            [month]: currentPaid + nominal
-          }
-        };
-      }
-      return r;
-    }));
-  };
-
-  const handleSendWA = (r: Resident) => {
-    if (!r.phone || r.phone === '0') {
-      alert('Nomor telepon warga ini belum tersedia di berkas master.');
-      return;
-    }
-    const cleanPhone = r.phone.startsWith('0') ? '62' + r.phone.slice(1) : r.phone;
-    const msg = `Assalamu'alaikum Bpk/Ibu ${r.name}. Mengingatkan tagihan iuran ${settings.rtName} (${r.house}) periode ${settings.currentMonth} ${settings.year} sebesar ${formatRupiah(r.rate)}. Terima kasih.`;
-    window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
-  };
-
   return (
-    <div className="min-h-screen bg-[#000000] text-slate-100 font-sans selection:bg-[#30D158] selection:text-black pb-24">
+    <div className="min-h-screen bg-[#000000] text-slate-100 font-sans selection:bg-[#30D158] selection:text-black pb-28 sm:pb-20">
       
-      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA */}
-      <div className="sticky top-0 z-50 bg-[#000000]/85 backdrop-blur-2xl border-b border-white/[0.08] px-5 py-2.5">
+      {/* TOAST NOTIFIKASI MELAYANG (iOS STYLE) */}
+      {toastMessage && (
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-[#1C1C1E]/95 border border-[#30D158]/50 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-semibold backdrop-blur-xl animate-fade-in">
+          <Check className="w-4 h-4 text-[#30D158]" />
+          <span>{toastMessage}</span>
+        </div>
+      )}
+
+      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA & INDIKATOR DATABASE */}
+      <div className="sticky top-0 z-40 bg-[#000000]/90 backdrop-blur-2xl border-b border-white/[0.08] px-4 py-2.5">
         <div className="max-w-6xl mx-auto flex justify-between items-center text-xs">
           <div className="flex items-center gap-2 font-semibold tracking-tight text-white">
             <span className="text-sm font-bold font-mono">{currentTime}</span>
             <div className="w-1.5 h-1.5 rounded-full bg-[#30D158] animate-pulse"></div>
           </div>
 
-          <div className="bg-[#1C1C1E] border border-white/10 px-4 py-1 rounded-full flex items-center gap-2 shadow-2xl">
+          <div className="bg-[#1C1C1E] border border-white/10 px-3.5 py-1 rounded-full flex items-center gap-2 shadow-2xl">
             <Building className="w-3.5 h-3.5 text-emerald-400" />
             <span className="text-[11px] font-semibold text-emerald-400 tracking-wide">RT 02 TPA</span>
           </div>
 
-          <div className="w-12"></div>
+          {/* Status Koneksi Supabase */}
+          <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
+            <Database className={`w-3.5 h-3.5 ${dbStatus === 'connected' ? 'text-[#30D158]' : 'text-amber-400'}`} />
+            <span className="hidden sm:inline">{dbStatus === 'connected' ? 'Cloud Sync' : 'Offline'}</span>
+          </div>
         </div>
       </div>
 
       {/* 2. HEADER APLIKASI */}
-      <header className="max-w-6xl mx-auto px-5 pt-5 pb-3">
-        <div className="flex flex-wrap justify-between items-center gap-4">
+      <header className="max-w-6xl mx-auto px-4 pt-4 pb-2">
+        <div className="flex flex-wrap justify-between items-center gap-3">
           <div>
-            <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-white">
+            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
               {settings.rtName}
             </h1>
-            <p className="text-xs text-slate-400 mt-0.5">Sistem Kas Mandiri • Transparan & Akuntabel</p>
+            <p className="text-[11px] text-slate-400">Kas Terverifikasi • Terkoneksi Database Supabase</p>
           </div>
 
           <div className="flex items-center gap-2">
             {sessionToken ? (
-              <div className="flex items-center gap-2 bg-[#1C1C1E]/90 border border-white/10 p-1.5 rounded-2xl shadow-inner">
-                <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-[#34C759] to-[#30D158] flex items-center justify-center text-black font-black text-xs shadow-md">
+              <div className="flex items-center gap-2 bg-[#1C1C1E] border border-white/10 p-1.5 rounded-2xl">
+                <div className="w-7 h-7 rounded-xl bg-gradient-to-tr from-[#34C759] to-[#30D158] flex items-center justify-center text-black font-black text-xs">
                   {currentUser?.role[0].toUpperCase()}
                 </div>
-                <div className="pr-2 text-left">
+                <div className="pr-1 text-left hidden sm:block">
                   <p className="text-[11px] font-bold text-white capitalize leading-tight">{currentUser?.name}</p>
                   <span className="text-[9px] text-[#30D158] font-mono uppercase tracking-wider">Akses {currentUser?.role.replace('_', ' ')}</span>
                 </div>
                 <button
                   onClick={handleLogout}
                   className="p-1.5 text-rose-400 hover:text-rose-300 hover:bg-rose-950/40 rounded-xl transition"
-                  title="Logout Server Session"
+                  title="Logout"
                 >
                   <LogOut className="w-4 h-4" />
                 </button>
@@ -259,18 +405,18 @@ export default function App() {
             ) : (
               <button
                 onClick={() => setActiveTab('publik')}
-                className="bg-white/10 hover:bg-white/15 border border-white/15 px-3.5 py-1.5 rounded-2xl text-xs font-semibold text-slate-200 flex items-center gap-1.5 backdrop-blur-md transition shadow-sm"
+                className="bg-white/10 hover:bg-white/15 border border-white/15 px-3 py-1.5 rounded-2xl text-xs font-semibold text-slate-200 flex items-center gap-1.5 backdrop-blur-md"
               >
-                <Lock className="w-3.5 h-3.5 text-amber-400" /> Mode Publik Warga
+                <Lock className="w-3.5 h-3.5 text-amber-400" /> Mode Warga
               </button>
             )}
           </div>
         </div>
       </header>
 
-      {/* 3. MENU NAVIGASI */}
-      <nav className="max-w-6xl mx-auto px-5 my-3">
-        <div className="bg-[#1C1C1E]/80 border border-white/10 p-1.5 rounded-[22px] backdrop-blur-xl flex gap-1.5 overflow-x-auto shadow-2xl">
+      {/* 3. MENU NAVIGASI DESKTOP & TABLET */}
+      <nav className="max-w-6xl mx-auto px-4 my-2 hidden sm:block">
+        <div className="bg-[#1C1C1E]/80 border border-white/10 p-1.5 rounded-[22px] backdrop-blur-xl flex gap-1.5 overflow-x-auto shadow-xl">
           {sessionToken && (
             <>
               <button
@@ -283,7 +429,7 @@ export default function App() {
                 onClick={() => setActiveTab('matriks')}
                 className={`px-4 py-2 rounded-[16px] text-xs font-bold transition whitespace-nowrap ${activeTab === 'matriks' ? 'bg-[#2C2C2E] text-white shadow-lg border border-white/10' : 'text-slate-400 hover:text-white'}`}
               >
-                Matriks 12 Bulan
+                Iuran 12 Bulan
               </button>
               <button
                 onClick={() => setActiveTab('kas')}
@@ -315,11 +461,11 @@ export default function App() {
       </nav>
 
       {/* 4. KONTEN UTAMA */}
-      <main className="max-w-6xl mx-auto px-5 mt-4 space-y-6">
+      <main className="max-w-6xl mx-auto px-4 mt-3 space-y-5">
 
         {/* DIALOG LOGIN PENGURUS */}
         {!sessionToken && activeTab !== 'publik' && (
-          <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-8 max-w-md mx-auto shadow-2xl text-center relative overflow-hidden backdrop-blur-2xl">
+          <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-6 sm:p-8 max-w-md mx-auto shadow-2xl text-center relative overflow-hidden backdrop-blur-2xl">
             <div className="w-14 h-14 bg-gradient-to-tr from-emerald-600 to-[#30D158] rounded-[22px] mx-auto flex items-center justify-center text-black mb-4 shadow-xl">
               <KeyRound className="w-7 h-7" />
             </div>
@@ -335,7 +481,7 @@ export default function App() {
                       key={r}
                       type="button"
                       onClick={() => setLoginRole(r)}
-                      className={`py-2 rounded-[16px] text-xs font-bold capitalize transition border ${loginRole === r ? 'bg-[#30D158] text-black border-[#30D158]' : 'bg-[#2C2C2E] text-slate-300 border-white/10'}`}
+                      className={`min-h-[44px] py-2 rounded-[16px] text-xs font-bold capitalize transition border ${loginRole === r ? 'bg-[#30D158] text-black border-[#30D158]' : 'bg-[#2C2C2E] text-slate-300 border-white/10'}`}
                     >
                       {r === 'ketua_rt' ? 'Ketua RT' : r}
                     </button>
@@ -350,7 +496,7 @@ export default function App() {
                   placeholder="Masukkan Password"
                   value={loginPassword}
                   onChange={(e) => setLoginPassword(e.target.value)}
-                  className="w-full bg-[#2C2C2E] border border-white/10 rounded-[18px] px-4 py-3 text-white text-sm focus:outline-none focus:border-[#30D158] transition"
+                  className="w-full min-h-[44px] bg-[#2C2C2E] border border-white/10 rounded-[18px] px-4 py-3 text-white text-sm focus:outline-none focus:border-[#30D158] transition"
                   required
                 />
               </div>
@@ -364,175 +510,128 @@ export default function App() {
               <button
                 type="submit"
                 disabled={isAuthenticating}
-                className="w-full bg-gradient-to-r from-[#34C759] to-[#30D158] text-black font-extrabold py-3.5 rounded-[18px] text-sm shadow-xl hover:opacity-95 transition flex items-center justify-center gap-2 mt-2"
+                className="w-full min-h-[46px] bg-gradient-to-r from-[#34C759] to-[#30D158] text-black font-extrabold py-3.5 rounded-[18px] text-sm shadow-xl hover:opacity-95 transition flex items-center justify-center gap-2 mt-2"
               >
                 {isAuthenticating ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Lock className="w-4 h-4" />}
-                Autentikasi Server Token
+                Masuk Sistem Pengurus
               </button>
             </form>
           </div>
         )}
 
-        {/* TAB DASHBOARD */}
+        {/* --- TAB 1: DASHBOARD --- */}
         {activeTab === 'dashboard' && sessionToken && (
-          <div className="space-y-5">
-            <div className="bg-[#1C1C1E]/90 border border-white/10 rounded-[32px] p-6 shadow-2xl relative overflow-hidden backdrop-blur-xl">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-6 items-center">
-                <div className="md:col-span-2 space-y-2">
-                  <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-xs font-bold">
+          <div className="space-y-4">
+            
+            {/* HERO SALDO KAS */}
+            <div className="bg-[#1C1C1E]/95 border border-white/10 rounded-[30px] p-5 sm:p-6 shadow-2xl relative overflow-hidden backdrop-blur-xl">
+              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
+                <div className="space-y-1">
+                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-[11px] font-bold">
                     <Activity className="w-3.5 h-3.5" />
-                    <span>Kas Terverifikasi Server</span>
+                    <span>Sinkron Database Supabase</span>
                   </div>
-                  <p className="text-xs text-slate-400 font-medium">Saldo Kas Riil RT 02 Tembalang Pesona Asri</p>
-                  <h2 className="text-4xl sm:text-5xl font-black text-white tracking-tight">
+                  <p className="text-xs text-slate-400 font-medium">Saldo Kas Riil Saat Ini</p>
+                  <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
                     {formatRupiah(stats.saldoAkhir)}
                   </h2>
-                  <p className="text-xs text-slate-400">
-                    Saldo Awal ({formatRupiah(settings.initialCash)}) + Iuran Warga ({formatRupiah(stats.totalIuranTerkumpul)}) - Beban Operasional ({formatRupiah(stats.totalPengeluaran)})
+                  <p className="text-[11px] text-slate-400">
+                    Saldo Awal ({formatRupiah(settings.initialCash)}) + Iuran Masuk ({formatRupiah(stats.totalIuranTerkumpul)}) - Beban Kas ({formatRupiah(stats.totalPengeluaran)})
                   </p>
                 </div>
 
-                <div className="bg-[#000000]/60 border border-white/10 rounded-[28px] p-4 flex items-center justify-around shadow-inner">
+                {/* BATTERY-STYLE CIRCULAR GAUGES */}
+                <div className="w-full sm:w-auto bg-[#000000]/60 border border-white/10 rounded-[24px] p-3 flex items-center justify-around gap-4 shadow-inner">
                   <div className="flex flex-col items-center">
-                    <div className="relative w-16 h-16 flex items-center justify-center">
+                    <div className="relative w-14 h-14 flex items-center justify-center">
                       <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                        <path className="text-[#2C2C2E]" strokeWidth="3.8" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                        <path className="text-[#30D158]" strokeDasharray={`${stats.kepatuhanPercent}, 100`} strokeWidth="3.8" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#2C2C2E]" strokeWidth="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#30D158]" strokeDasharray={`${stats.kepatuhanPercent}, 100`} strokeWidth="4" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                       </svg>
-                      <Smartphone className="w-5 h-5 text-white absolute" />
+                      <Smartphone className="w-4 h-4 text-white absolute" />
                     </div>
-                    <span className="text-sm font-extrabold text-white mt-1.5">{stats.kepatuhanPercent}%</span>
-                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Kepatuhan</span>
+                    <span className="text-xs font-black text-white mt-1">{stats.kepatuhanPercent}%</span>
+                    <span className="text-[9px] text-slate-400 uppercase font-bold">Kepatuhan</span>
                   </div>
 
                   <div className="flex flex-col items-center">
-                    <div className="relative w-16 h-16 flex items-center justify-center">
+                    <div className="relative w-14 h-14 flex items-center justify-center">
                       <svg className="w-full h-full transform -rotate-90" viewBox="0 0 36 36">
-                        <path className="text-[#2C2C2E]" strokeWidth="3.8" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
-                        <path className="text-[#0A84FF]" strokeDasharray={`${Math.min(100, Math.round((stats.iuranBulanIni / (stats.targetBulanIni || 1)) * 100))}, 100`} strokeWidth="3.8" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#2C2C2E]" strokeWidth="4" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
+                        <path className="text-[#0A84FF]" strokeDasharray={`${Math.min(100, Math.round((stats.iuranBulanIni / (stats.targetBulanIni || 1)) * 100))}, 100`} strokeWidth="4" strokeLinecap="round" stroke="currentColor" fill="none" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831" />
                       </svg>
-                      <Radio className="w-5 h-5 text-white absolute" />
+                      <Radio className="w-4 h-4 text-white absolute" />
                     </div>
-                    <span className="text-sm font-extrabold text-white mt-1.5">
+                    <span className="text-xs font-black text-white mt-1">
                       {Math.round((stats.iuranBulanIni / (stats.targetBulanIni || 1)) * 100)}%
                     </span>
-                    <span className="text-[10px] text-slate-400 font-semibold uppercase tracking-wider">Bulan Ini</span>
+                    <span className="text-[9px] text-slate-400 uppercase font-bold">Bulan Ini</span>
                   </div>
                 </div>
               </div>
             </div>
 
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-              <div className="bg-[#1C1C1E] border border-white/10 rounded-[30px] p-6 shadow-xl space-y-4">
-                <div className="flex justify-between items-center">
-                  <h3 className="font-extrabold text-sm text-white flex items-center gap-1.5">
-                    <PieIcon className="w-4 h-4 text-[#30D158]" /> Proporsi Iuran Dawis (Okt)
-                  </h3>
-                  <span className="text-[10px] bg-[#2C2C2E] px-2 py-0.5 rounded-full text-slate-300 font-mono">Real-time</span>
-                </div>
-
-                <div className="flex items-center justify-center py-2">
-                  <div className="relative w-36 h-36 flex items-center justify-center">
-                    <svg className="w-full h-full transform -rotate-90" viewBox="0 0 42 42">
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#2C2C2E" strokeWidth="6" />
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#30D158" strokeWidth="6" strokeDasharray="33 67" strokeDashoffset="0" strokeLinecap="round" />
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#0A84FF" strokeWidth="6" strokeDasharray="27 73" strokeDashoffset="-33" strokeLinecap="round" />
-                      <circle cx="21" cy="21" r="15.91549430918954" fill="transparent" stroke="#FF9F0A" strokeWidth="6" strokeDasharray="40 60" strokeDashoffset="-60" strokeLinecap="round" />
-                    </svg>
-                    <div className="text-center absolute">
-                      <span className="text-xl font-black text-white">{stats.kkLunasBulanIni}</span>
-                      <span className="text-[9px] text-slate-400 block uppercase font-bold">KK Lunas</span>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="space-y-2 text-xs">
-                  <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-[#30D158]"></div>
-                      <span className="font-semibold text-white">Dawis 1</span>
-                    </div>
-                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 1'].lunasKK}/{stats.dawisStats['Dawis 1'].totalKK} KK</span>
-                  </div>
-                  <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-[#0A84FF]"></div>
-                      <span className="font-semibold text-white">Dawis 2</span>
-                    </div>
-                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 2'].lunasKK}/{stats.dawisStats['Dawis 2'].totalKK} KK</span>
-                  </div>
-                  <div className="flex justify-between items-center p-2 rounded-[14px] bg-[#2C2C2E]/60 border border-white/5">
-                    <div className="flex items-center gap-2">
-                      <div className="w-3 h-3 rounded-full bg-[#FF9F0A]"></div>
-                      <span className="font-semibold text-white">Dawis 3</span>
-                    </div>
-                    <span className="font-mono text-slate-300 font-bold">{stats.dawisStats['Dawis 3'].lunasKK}/{stats.dawisStats['Dawis 3'].totalKK} KK</span>
-                  </div>
-                </div>
+            {/* BENTO KARTU FINANSIAL RESPOCIVE */}
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Iuran (Okt)</span>
+                <h4 className="text-lg sm:text-xl font-black text-white mt-1">{formatRupiah(stats.iuranBulanIni)}</h4>
+                <p className="text-[10px] text-[#30D158] mt-1">{stats.kkLunasBulanIni} KK Lunas</p>
               </div>
 
-              <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-lg flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Iuran Masuk (Okt)</span>
-                    <div className="p-2 bg-emerald-950/70 border border-emerald-500/30 rounded-xl text-[#30D158]">
-                      <ArrowUpRight className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-2xl font-black text-white">{formatRupiah(stats.iuranBulanIni)}</h4>
-                    <p className="text-[11px] text-slate-400 mt-1">{stats.kkLunasBulanIni} KK tertib membayar</p>
-                  </div>
-                </div>
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Piutang (Okt)</span>
+                <h4 className="text-lg sm:text-xl font-black text-amber-400 mt-1">{formatRupiah(stats.piutangBulanIni)}</h4>
+                <p className="text-[10px] text-slate-400 mt-1">Sisa belum bayar</p>
+              </div>
 
-                <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-lg flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Piutang Iuran (Okt)</span>
-                    <div className="p-2 bg-amber-950/70 border border-amber-500/30 rounded-xl text-[#FF9F0A]">
-                      <AlertCircle className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-2xl font-black text-amber-400">{formatRupiah(stats.piutangBulanIni)}</h4>
-                    <p className="text-[11px] text-slate-400 mt-1">Target: {formatRupiah(stats.targetBulanIni)}</p>
-                  </div>
-                </div>
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Iuran Jan-Des</span>
+                <h4 className="text-lg sm:text-xl font-black text-blue-400 mt-1">{formatRupiah(stats.totalIuranTerkumpul)}</h4>
+                <p className="text-[10px] text-slate-400 mt-1">88 Kepala Keluarga</p>
+              </div>
 
-                <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-lg flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Iuran Setahun Penuh</span>
-                    <div className="p-2 bg-blue-950/70 border border-blue-500/30 rounded-xl text-[#0A84FF]">
-                      <CheckCircle2 className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-2xl font-black text-blue-400">{formatRupiah(stats.totalIuranTerkumpul)}</h4>
-                    <p className="text-[11px] text-slate-400 mt-1">Akumulasi 88 Warga Jan-Des</p>
-                  </div>
-                </div>
-
-                <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-lg flex flex-col justify-between">
-                  <div className="flex justify-between items-start">
-                    <span className="text-xs font-bold text-slate-400 uppercase tracking-wider">Beban Pengeluaran</span>
-                    <div className="p-2 bg-rose-950/70 border border-rose-500/30 rounded-xl text-[#FF453A]">
-                      <ArrowDownRight className="w-4 h-4" />
-                    </div>
-                  </div>
-                  <div>
-                    <h4 className="text-2xl font-black text-rose-400">{formatRupiah(stats.totalPengeluaran)}</h4>
-                    <p className="text-[11px] text-slate-400 mt-1">Biaya Kebersihan & Listrik</p>
-                  </div>
-                </div>
+              <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Total Beban</span>
+                <h4 className="text-lg sm:text-xl font-black text-rose-400 mt-1">{formatRupiah(stats.totalPengeluaran)}</h4>
+                <p className="text-[10px] text-slate-400 mt-1">Biaya Lingkungan</p>
               </div>
             </div>
+
+            {/* PROPORSI IURAN DAWIS CHART */}
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl">
+              <div className="flex justify-between items-center mb-3">
+                <h3 className="font-extrabold text-sm text-white flex items-center gap-1.5">
+                  <PieIcon className="w-4 h-4 text-[#30D158]" /> Kepatuhan Kelompok Dawis ({settings.currentMonth})
+                </h3>
+              </div>
+              <div className="grid grid-cols-3 gap-2">
+                {['Dawis 1', 'Dawis 2', 'Dawis 3'].map((d, idx) => {
+                  const item = stats.dawisStats[d];
+                  const colors = ['#30D158', '#0A84FF', '#FF9F0A'];
+                  return (
+                    <div key={d} className="bg-[#2C2C2E]/60 border border-white/5 p-3 rounded-[20px] text-center">
+                      <div className="w-2.5 h-2.5 rounded-full mx-auto mb-1" style={{ backgroundColor: colors[idx] }}></div>
+                      <p className="text-xs font-bold text-white">{d}</p>
+                      <p className="text-sm font-black mt-1" style={{ color: colors[idx] }}>
+                        {item.lunasKK}/{item.totalKK} KK
+                      </p>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+
           </div>
         )}
 
-        {/* TAB MATRIKS 12 BULAN */}
+        {/* --- TAB 2: IURAN 12 BULAN (DENGAN TAMPILAN KARTU KHUSUS MOBILE) --- */}
         {activeTab === 'matriks' && sessionToken && (
-          <div className="space-y-4">
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-4 flex flex-wrap justify-between items-center gap-3 shadow-xl">
-              <div className="flex items-center gap-2 flex-1 max-w-sm bg-[#2C2C2E] border border-white/10 rounded-[18px] px-3.5 py-2">
+          <div className="space-y-3">
+            
+            {/* FILTER & PENCARIAN TOUCH-FRIENDLY */}
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-3.5 space-y-3 shadow-xl">
+              <div className="flex items-center gap-2 bg-[#2C2C2E] border border-white/10 rounded-[16px] px-3.5 py-2">
                 <Search className="w-4 h-4 text-slate-400" />
                 <input
                   type="text"
@@ -543,47 +642,129 @@ export default function App() {
                 />
               </div>
 
-              <div className="flex items-center gap-1.5">
-                <Filter className="w-4 h-4 text-slate-400" />
-                <span className="text-[11px] font-bold text-slate-400 uppercase tracking-wider mr-1">Dawis:</span>
-                {['Semua', 'Dawis 1', 'Dawis 2', 'Dawis 3'].map((d) => (
+              <div className="flex justify-between items-center gap-2">
+                <div className="flex items-center gap-1 overflow-x-auto pb-0.5">
+                  {['Semua', 'Dawis 1', 'Dawis 2', 'Dawis 3'].map((d) => (
+                    <button
+                      key={d}
+                      onClick={() => setSelectedDawis(d)}
+                      className={`min-h-[36px] px-3 py-1 rounded-[12px] text-xs font-bold transition whitespace-nowrap ${selectedDawis === d ? 'bg-[#30D158] text-black shadow-md' : 'bg-[#2C2C2E] text-slate-300'}`}
+                    >
+                      {d}
+                    </button>
+                  ))}
+                </div>
+
+                {/* Saklar Tampilan Kartu / Tabel di Layar HP */}
+                <div className="flex sm:hidden bg-[#2C2C2E] p-1 rounded-xl">
                   <button
-                    key={d}
-                    onClick={() => setSelectedDawis(d)}
-                    className={`px-3 py-1.5 rounded-[14px] text-xs font-bold transition ${selectedDawis === d ? 'bg-[#30D158] text-black shadow-md' : 'bg-[#2C2C2E] text-slate-300 hover:text-white'}`}
+                    onClick={() => setViewModeMobile('card')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${viewModeMobile === 'card' ? 'bg-[#30D158] text-black' : 'text-slate-400'}`}
                   >
-                    {d}
+                    Kartu
                   </button>
-                ))}
+                  <button
+                    onClick={() => setViewModeMobile('table')}
+                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold ${viewModeMobile === 'table' ? 'bg-[#30D158] text-black' : 'text-slate-400'}`}
+                  >
+                    Tabel
+                  </button>
+                </div>
               </div>
             </div>
 
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl">
+            {/* A. TAMPILAN KARTU WARGA (SANGAT NYAMAN DI LAYAR HP) */}
+            <div className={`${viewModeMobile === 'card' ? 'block sm:hidden' : 'hidden'} space-y-2.5`}>
+              {filteredResidents.map((r) => {
+                const paidThisMonth = r.payments[settings.currentMonth] || 0;
+                const isPaid = r.rate > 0 && paidThisMonth >= r.rate;
+
+                return (
+                  <div key={r.id} className="bg-[#1C1C1E] border border-white/10 rounded-[22px] p-4 shadow-lg space-y-3">
+                    <div className="flex justify-between items-start">
+                      <div>
+                        <div className="flex items-center gap-2">
+                          <span className="font-mono text-[10px] text-[#30D158] font-bold bg-emerald-950/60 px-2 py-0.5 rounded-md border border-emerald-500/20">{r.code}</span>
+                          <span className="text-[10px] text-slate-400">{r.dawis}</span>
+                        </div>
+                        <h4 className="font-bold text-white text-sm mt-1">{r.name}</h4>
+                        <p className="text-xs text-slate-300">{r.house} • Tarif: {formatRupiah(r.rate)}</p>
+                      </div>
+                      <button
+                        onClick={() => handleSendWA(r)}
+                        className="p-2.5 bg-[#2C2C2E] text-[#30D158] rounded-xl active:bg-[#30D158] active:text-black transition"
+                      >
+                        <MessageCircle className="w-4 h-4" />
+                      </button>
+                    </div>
+
+                    {/* Quick Button Catat Bayar Bulan Berjalan */}
+                    <div className="flex justify-between items-center pt-2 border-t border-white/5">
+                      <div className="text-xs">
+                        <span className="text-slate-400">Status {settings.currentMonth}: </span>
+                        <span className={`font-bold ${isPaid ? 'text-[#30D158]' : 'text-rose-400'}`}>
+                          {isPaid ? 'LUNAS' : formatRupiah(paidThisMonth)}
+                        </span>
+                      </div>
+                      {r.rate > 0 && !isPaid && (
+                        <button
+                          onClick={() => handleQuickPay(r.id, settings.currentMonth)}
+                          className="min-h-[38px] px-4 py-1.5 bg-[#30D158] text-black font-extrabold text-xs rounded-xl active:scale-95 transition"
+                        >
+                          Catat Bayar Okt
+                        </button>
+                      )}
+                    </div>
+
+                    {/* Indikator Titik 12 Bulan (Jan-Des) */}
+                    <div className="grid grid-cols-12 gap-1 pt-1">
+                      {MONTHS.map(m => {
+                        const p = r.payments[m] || 0;
+                        const lunas = r.rate > 0 && p >= r.rate;
+                        return (
+                          <div
+                            key={m}
+                            onClick={() => r.rate > 0 && handleQuickPay(r.id, m)}
+                            className={`h-5 rounded-md flex items-center justify-center text-[8px] font-bold cursor-pointer ${
+                              lunas ? 'bg-[#30D158]/30 text-[#30D158] border border-[#30D158]/40' :
+                              p > 0 ? 'bg-amber-500/30 text-amber-400' : 'bg-[#2C2C2E] text-slate-500'
+                            }`}
+                          >
+                            {m[0]}
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+
+            {/* B. TAMPILAN TABEL MATRIKS (DESKTOP & OPSIONAL HP) */}
+            <div className={`${viewModeMobile === 'table' ? 'block' : 'hidden sm:block'} bg-[#1C1C1E] border border-white/10 rounded-[24px] overflow-hidden shadow-2xl`}>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
-                  <thead className="bg-[#2C2C2E] text-slate-300 uppercase font-black tracking-wider text-[10px]">
+                  <thead className="bg-[#2C2C2E] text-slate-300 uppercase font-black text-[10px]">
                     <tr>
-                      <th className="p-3 border-r border-b border-white/10">ID / Warga</th>
+                      <th className="p-3 border-r border-b border-white/10">Warga</th>
                       <th className="p-3 border-r border-b border-white/10">Blok</th>
-                      <th className="p-3 border-r border-b border-white/10">Dawis</th>
                       <th className="p-3 border-r border-b border-white/10 text-right">Tarif</th>
                       {MONTHS.map(m => (
                         <th key={m} className={`p-3 border-r border-b border-white/10 text-center min-w-[50px] ${m === settings.currentMonth ? 'bg-[#30D158]/20 text-[#30D158]' : ''}`}>
                           {m}
                         </th>
                       ))}
-                      <th className="p-3 border-b border-white/10 text-center">WA</th>
+                      <th className="p-3 border-b border-white/10 text-center">Aksi</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-white/5">
                     {filteredResidents.map((r) => (
-                      <tr key={r.id} className="hover:bg-white/[0.03] transition">
+                      <tr key={r.id} className="hover:bg-white/[0.03]">
                         <td className="p-2.5 border-r border-white/5 font-semibold text-white whitespace-nowrap">
-                          <span className="font-mono text-[9px] text-[#30D158] block leading-none mb-0.5">{r.code}</span>
+                          <span className="font-mono text-[9px] text-[#30D158] block leading-none">{r.code}</span>
                           {r.name}
                         </td>
                         <td className="p-2.5 border-r border-white/5 whitespace-nowrap font-bold text-slate-300">{r.house}</td>
-                        <td className="p-2.5 border-r border-white/5 whitespace-nowrap text-slate-400">{r.dawis}</td>
                         <td className="p-2.5 border-r border-white/5 text-right font-mono text-slate-300">{r.rate > 0 ? (r.rate / 1000) + 'k' : '-'}</td>
                         {MONTHS.map(m => {
                           const paid = r.payments[m] || 0;
@@ -595,12 +776,11 @@ export default function App() {
                             <td
                               key={m}
                               onClick={() => r.rate > 0 && handleQuickPay(r.id, m)}
-                              className={`p-1.5 border-r border-white/5 text-center cursor-pointer transition text-[11px] font-bold ${
-                                isPaid ? 'bg-[#30D158]/15 text-[#30D158] hover:bg-[#30D158]/25' :
-                                isPartial ? 'bg-amber-500/15 text-amber-400 hover:bg-amber-500/25' :
-                                isUnpaid ? 'text-rose-500/60 hover:bg-rose-950/30' : 'text-slate-600'
+                              className={`p-1.5 border-r border-white/5 text-center cursor-pointer text-[11px] font-bold ${
+                                isPaid ? 'bg-[#30D158]/15 text-[#30D158]' :
+                                isPartial ? 'bg-amber-500/15 text-amber-400' :
+                                isUnpaid ? 'text-rose-500/60' : 'text-slate-600'
                               }`}
-                              title={r.rate > 0 ? `Klik untuk catat bayar ${m}` : ''}
                             >
                               {isPaid ? (paid / 1000) + 'k' : isPartial ? `${paid/1000}k` : isUnpaid ? '0' : '-'}
                             </td>
@@ -609,8 +789,7 @@ export default function App() {
                         <td className="p-2 text-center whitespace-nowrap">
                           <button
                             onClick={() => handleSendWA(r)}
-                            className="p-1.5 bg-[#2C2C2E] hover:bg-[#30D158] hover:text-black text-[#30D158] rounded-xl transition shadow-sm"
-                            title="Kirim Pesan WhatsApp"
+                            className="p-1.5 bg-[#2C2C2E] hover:bg-[#30D158] hover:text-black text-[#30D158] rounded-xl"
                           >
                             <MessageCircle className="w-3.5 h-3.5" />
                           </button>
@@ -621,174 +800,43 @@ export default function App() {
                 </table>
               </div>
             </div>
+
           </div>
         )}
 
-        {/* TAB BUKU KAS */}
+        {/* --- TAB 3: BUKU KAS OPERASIONAL (TERHUBUNG KE SUPABASE) --- */}
         {activeTab === 'kas' && sessionToken && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <div>
-                <h2 className="text-xl font-extrabold text-white">Buku Kas Operasional Lingkungan</h2>
-                <p className="text-xs text-slate-400">Pencatatan beban kebersihan, keamanan, dan sarana umum</p>
+                <h2 className="text-lg sm:text-xl font-extrabold text-white">Buku Kas Operasional RT</h2>
+                <p className="text-xs text-slate-400">Data live dari tabel Supabase</p>
               </div>
               <button
                 onClick={() => setShowAddTrx(true)}
-                className="bg-gradient-to-r from-emerald-600 to-[#30D158] text-black font-extrabold px-4 py-2 rounded-[18px] text-xs flex items-center gap-1.5 shadow-xl hover:opacity-95"
+                className="min-h-[44px] bg-gradient-to-r from-emerald-600 to-[#30D158] text-black font-extrabold px-4 py-2 rounded-[18px] text-xs flex items-center gap-1.5 shadow-xl"
               >
-                <Plus className="w-4 h-4" /> Catat Kas Keluar
+                <Plus className="w-4 h-4" /> Catat Kas
               </button>
             </div>
 
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#2C2C2E] text-slate-400 uppercase font-black text-[10px]">
-                  <tr>
-                    <th className="p-3.5">Tanggal</th>
-                    <th className="p-3.5">Keterangan Pengeluaran</th>
-                    <th className="p-3.5">Kategori</th>
-                    <th className="p-3.5 text-right">Nominal</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {extraTransactions.map((t) => (
-                    <tr key={t.id} className="hover:bg-white/[0.03]">
-                      <td className="p-3.5 font-mono text-slate-400">{t.date}</td>
-                      <td className="p-3.5 font-bold text-white">{t.desc}</td>
-                      <td className="p-3.5 text-slate-300">{t.category}</td>
-                      <td className="p-3.5 text-right font-black text-rose-400">-{formatRupiah(t.amount)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB MASTER 88 KK */}
-        {activeTab === 'warga' && sessionToken && (
-          <div className="space-y-4">
-            <h2 className="text-xl font-extrabold text-white">Master Data 88 Kepala Keluarga</h2>
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] overflow-hidden shadow-2xl">
-              <table className="w-full text-left text-xs">
-                <thead className="bg-[#2C2C2E] text-slate-400 uppercase font-black text-[10px]">
-                  <tr>
-                    <th className="p-3.5">Kode KK</th>
-                    <th className="p-3.5">Nama Lengkap</th>
-                    <th className="p-3.5">Alamat / Blok</th>
-                    <th className="p-3.5">Dawis</th>
-                    <th className="p-3.5">No. WhatsApp</th>
-                    <th className="p-3.5 text-right">Besaran Iuran</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {filteredResidents.map((r) => (
-                    <tr key={r.id} className="hover:bg-white/[0.03]">
-                      <td className="p-3.5 font-mono text-[#30D158] font-bold">{r.code}</td>
-                      <td className="p-3.5 font-bold text-white">{r.name}</td>
-                      <td className="p-3.5 font-semibold text-slate-300">{r.house}</td>
-                      <td className="p-3.5 text-slate-400">{r.dawis}</td>
-                      <td className="p-3.5 font-mono text-slate-300">{maskPhone(r.phone)}</td>
-                      <td className="p-3.5 text-right font-black text-white">{formatRupiah(r.rate)}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        )}
-
-        {/* TAB CETAK LAPORAN */}
-        {activeTab === 'laporan' && sessionToken && (
-          <div className="space-y-4">
-            <div className="flex justify-between items-center no-print">
-              <p className="text-xs text-slate-400">Lembar Rekapitulasi Kas Tahunan RT 02 (Format A4 Resmi):</p>
-              <button
-                onClick={() => window.print()}
-                className="bg-white text-black font-extrabold px-4 py-2 rounded-[18px] text-xs flex items-center gap-1.5 shadow-xl hover:bg-slate-200"
-              >
-                <Printer className="w-4 h-4" /> Cetak Dokumen A4
-              </button>
-            </div>
-
-            <div className="bg-white text-slate-900 p-8 rounded-[28px] max-w-2xl mx-auto shadow-2xl border border-slate-300">
-              <div className="text-center border-b-2 border-slate-900 pb-4 mb-6">
-                <h2 className="text-xl font-black uppercase tracking-wide">PENGURUS {settings.rtName}</h2>
-                <p className="text-xs text-slate-600">Tembalang, Kota Semarang, Jawa Tengah</p>
-                <h3 className="text-sm font-bold mt-3 underline">LAPORAN PERTANGGUNGJAWABAN KEUANGAN KAS</h3>
-                <p className="text-[11px] text-slate-500">Tahun Pembukuan: {settings.year}</p>
-              </div>
-
-              <div className="space-y-3 text-sm">
-                <div className="flex justify-between py-1 border-b">
-                  <span>Saldo Awal Kas:</span>
-                  <span className="font-mono font-bold">{formatRupiah(settings.initialCash)}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b text-emerald-800 font-semibold">
-                  <span>Total Iuran Terkumpul (88 KK):</span>
-                  <span className="font-mono">+{formatRupiah(stats.totalIuranTerkumpul)}</span>
-                </div>
-                <div className="flex justify-between py-1 border-b text-rose-800 font-semibold">
-                  <span>Total Pengeluaran Operasional Lingkungan:</span>
-                  <span className="font-mono">-{formatRupiah(stats.totalPengeluaran)}</span>
-                </div>
-                <div className="flex justify-between py-2 border-b-2 border-slate-900 text-base font-black bg-slate-100 px-2 rounded">
-                  <span>SALDO AKHIR KAS RT:</span>
-                  <span className="font-mono text-emerald-800">{formatRupiah(stats.saldoAkhir)}</span>
-                </div>
-              </div>
-
-              <div className="mt-12 grid grid-cols-2 text-center text-xs">
-                <div>
-                  <p>Mengetahui,</p>
-                  <p className="font-bold">Ketua RT 02</p>
-                  <div className="h-16"></div>
-                  <p className="font-bold underline">{settings.leader}</p>
-                </div>
-                <div>
-                  <p>Semarang, {new Date().toLocaleDateString('id-ID')}</p>
-                  <p className="font-bold">Bendahara RT 02</p>
-                  <div className="h-16"></div>
-                  <p className="font-bold underline">{settings.treasurer}</p>
-                </div>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {/* TAB PORTAL PUBLIK WARGA */}
-        {activeTab === 'publik' && (
-          <div className="space-y-6 max-w-2xl mx-auto">
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-8 text-center shadow-2xl relative overflow-hidden backdrop-blur-2xl">
-              <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/70 border border-emerald-500/30 text-[#30D158] text-[11px] font-black uppercase mb-3">
-                <CheckCircle2 className="w-3.5 h-3.5" /> Portal Transparansi Publik Warga
-              </div>
-              <h2 className="text-xl font-bold text-white">Kas Terbuka {settings.rtName}</h2>
-              <p className="text-4xl sm:text-5xl font-black text-white mt-2 tracking-tight">{formatRupiah(stats.saldoAkhir)}</p>
-              <p className="text-xs text-slate-400 mt-2">Saldo Riil per {settings.currentMonth} {settings.year} • Diaudit Pengurus</p>
-            </div>
-
-            <div className="grid grid-cols-2 gap-4">
-              <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[26px] text-center shadow-lg">
-                <p className="text-xs font-semibold text-slate-400 uppercase">Iuran Masuk ({settings.currentMonth})</p>
-                <p className="text-xl font-black text-[#30D158] mt-1">{formatRupiah(stats.iuranBulanIni)}</p>
-              </div>
-              <div className="bg-[#1C1C1E] border border-white/10 p-5 rounded-[26px] text-center shadow-lg">
-                <p className="text-xs font-semibold text-slate-400 uppercase">Kepatuhan Warga</p>
-                <p className="text-xl font-black text-[#0A84FF] mt-1">{stats.kepatuhanPercent}% Lunas</p>
-              </div>
-            </div>
-
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-6 shadow-xl space-y-3">
-              <h3 className="font-extrabold text-sm text-white">Rincian Pengeluaran Operasional RT</h3>
-              <div className="divide-y divide-white/5 text-xs">
-                {extraTransactions.map((t) => (
-                  <div key={t.id} className="py-2.5 flex justify-between items-center">
-                    <div>
-                      <p className="font-bold text-white">{t.desc}</p>
-                      <p className="text-[10px] text-slate-400">{t.date} • {t.category}</p>
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] overflow-hidden shadow-2xl">
+              <div className="divide-y divide-white/5">
+                {transactions.map((t) => (
+                  <div key={t.id} className="p-4 flex justify-between items-center hover:bg-white/[0.02]">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] px-2 py-0.5 rounded-md font-bold uppercase ${t.type === 'IN' ? 'bg-[#30D158]/20 text-[#30D158]' : 'bg-rose-500/20 text-rose-400'}`}>
+                          {t.type === 'IN' ? 'Masuk' : 'Keluar'}
+                        </span>
+                        <span className="text-[10px] text-slate-400 font-mono">{t.date}</span>
+                      </div>
+                      <p className="font-bold text-white text-xs sm:text-sm">{t.desc}</p>
+                      <span className="text-[10px] text-slate-400">{t.category}</span>
                     </div>
-                    <span className="font-black text-rose-400">{formatRupiah(t.amount)}</span>
+                    <span className={`text-sm sm:text-base font-black ${t.type === 'IN' ? 'text-[#30D158]' : 'text-rose-400'}`}>
+                      {t.type === 'IN' ? '+' : '-'}{formatRupiah(t.amount)}
+                    </span>
                   </div>
                 ))}
               </div>
@@ -796,75 +844,242 @@ export default function App() {
           </div>
         )}
 
+        {/* --- TAB 4: DATA 88 KK --- */}
+        {activeTab === 'warga' && sessionToken && (
+          <div className="space-y-4">
+            <h2 className="text-lg sm:text-xl font-extrabold text-white">Master Data 88 Kepala Keluarga</h2>
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] overflow-hidden shadow-2xl">
+              <div className="divide-y divide-white/5">
+                {filteredResidents.map((r) => (
+                  <div key={r.id} className="p-3.5 flex justify-between items-center hover:bg-white/[0.02]">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-[9px] text-[#30D158] font-bold">{r.code}</span>
+                        <span className="text-[10px] text-slate-400">{r.dawis}</span>
+                      </div>
+                      <p className="font-bold text-white text-xs sm:text-sm">{r.name}</p>
+                      <p className="text-[11px] text-slate-400">{r.house} • {maskPhone(r.phone)}</p>
+                    </div>
+                    <span className="text-xs font-black text-white">{formatRupiah(r.rate)}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- TAB 5: CETAK LAPORAN RESMI A4 --- */}
+        {activeTab === 'laporan' && sessionToken && (
+          <div className="space-y-4">
+            <div className="flex justify-between items-center no-print">
+              <p className="text-xs text-slate-400">Lembar Rekapitulasi Kas A4:</p>
+              <button
+                onClick={() => window.print()}
+                className="min-h-[44px] bg-white text-black font-extrabold px-4 py-2 rounded-[18px] text-xs flex items-center gap-1.5 shadow-xl"
+              >
+                <Printer className="w-4 h-4" /> Cetak A4
+              </button>
+            </div>
+
+            <div className="bg-white text-slate-900 p-6 sm:p-8 rounded-[28px] max-w-2xl mx-auto shadow-2xl border border-slate-300">
+              <div className="text-center border-b-2 border-slate-900 pb-4 mb-4">
+                <h2 className="text-lg sm:text-xl font-black uppercase">PENGURUS {settings.rtName}</h2>
+                <p className="text-xs text-slate-600">Tembalang, Kota Semarang, Jawa Tengah</p>
+                <h3 className="text-xs sm:text-sm font-bold mt-2 underline">LAPORAN KEUANGAN KAS BULANAN</h3>
+                <p className="text-[10px] text-slate-500">Tahun Pembukuan: {settings.year}</p>
+              </div>
+
+              <div className="space-y-2 text-xs sm:text-sm">
+                <div className="flex justify-between py-1 border-b">
+                  <span>Saldo Awal Kas:</span>
+                  <span className="font-mono font-bold">{formatRupiah(settings.initialCash)}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b text-emerald-800 font-semibold">
+                  <span>Penerimaan Iuran Warga (88 KK):</span>
+                  <span className="font-mono">+{formatRupiah(stats.totalIuranTerkumpul)}</span>
+                </div>
+                <div className="flex justify-between py-1 border-b text-rose-800 font-semibold">
+                  <span>Total Pengeluaran Kas:</span>
+                  <span className="font-mono">-{formatRupiah(stats.totalPengeluaran)}</span>
+                </div>
+                <div className="flex justify-between py-2 border-b-2 border-slate-900 text-sm sm:text-base font-black bg-slate-100 px-2 rounded">
+                  <span>SALDO AKHIR KAS RT:</span>
+                  <span className="font-mono text-emerald-800">{formatRupiah(stats.saldoAkhir)}</span>
+                </div>
+              </div>
+
+              <div className="mt-8 grid grid-cols-2 text-center text-xs">
+                <div>
+                  <p>Ketua RT 02</p>
+                  <div className="h-12"></div>
+                  <p className="font-bold underline">{settings.leader}</p>
+                </div>
+                <div>
+                  <p>Bendahara RT 02</p>
+                  <div className="h-12"></div>
+                  <p className="font-bold underline">{settings.treasurer}</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        )}
+
+        {/* --- TAB 6: PORTAL TRANSPARANSI PUBLIK --- */}
+        {activeTab === 'publik' && (
+          <div className="space-y-4 max-w-xl mx-auto">
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-6 text-center shadow-2xl relative">
+              <div className="inline-flex items-center gap-1 px-3 py-0.5 rounded-full bg-emerald-950/70 border border-emerald-500/30 text-[#30D158] text-[10px] font-black uppercase mb-2">
+                <CheckCircle2 className="w-3.5 h-3.5" /> Portal Transparansi Publik Warga
+              </div>
+              <h2 className="text-base sm:text-lg font-bold text-white">Kas Terbuka {settings.rtName}</h2>
+              <p className="text-3xl sm:text-5xl font-black text-white mt-1">{formatRupiah(stats.saldoAkhir)}</p>
+              <p className="text-[11px] text-slate-400 mt-1">Saldo Riil per {settings.currentMonth} {settings.year}</p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="bg-[#1C1C1E] border border-white/10 p-4 rounded-[22px] text-center">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase">Iuran Masuk ({settings.currentMonth})</p>
+                <p className="text-base sm:text-lg font-black text-[#30D158] mt-0.5">{formatRupiah(stats.iuranBulanIni)}</p>
+              </div>
+              <div className="bg-[#1C1C1E] border border-white/10 p-4 rounded-[22px] text-center">
+                <p className="text-[10px] font-semibold text-slate-400 uppercase">Kepatuhan Warga</p>
+                <p className="text-base sm:text-lg font-black text-[#0A84FF] mt-0.5">{stats.kepatuhanPercent}%</p>
+              </div>
+            </div>
+          </div>
+        )}
+
       </main>
 
-      {/* MODAL INPUT PENGELUARAN */}
+      {/* 5. BOTTOM NAVIGATION BAR KHUSUS HP (RAMAH JEMPOL) */}
+      <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#1C1C1E]/95 border-t border-white/10 backdrop-blur-2xl px-2 py-2 sm:hidden flex justify-around items-center">
+        {sessionToken ? (
+          <>
+            <button
+              onClick={() => setActiveTab('dashboard')}
+              className={`flex flex-col items-center gap-1 p-1.5 ${activeTab === 'dashboard' ? 'text-[#30D158]' : 'text-slate-400'}`}
+            >
+              <Activity className="w-4 h-4" />
+              <span className="text-[9px] font-bold">Dashboard</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('matriks')}
+              className={`flex flex-col items-center gap-1 p-1.5 ${activeTab === 'matriks' ? 'text-[#30D158]' : 'text-slate-400'}`}
+            >
+              <Calendar className="w-4 h-4" />
+              <span className="text-[9px] font-bold">Iuran</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('kas')}
+              className={`flex flex-col items-center gap-1 p-1.5 ${activeTab === 'kas' ? 'text-[#30D158]' : 'text-slate-400'}`}
+            >
+              <CreditCard className="w-4 h-4" />
+              <span className="text-[9px] font-bold">Buku Kas</span>
+            </button>
+            <button
+              onClick={() => setActiveTab('warga')}
+              className={`flex flex-col items-center gap-1 p-1.5 ${activeTab === 'warga' ? 'text-[#30D158]' : 'text-slate-400'}`}
+            >
+              <User className="w-4 h-4" />
+              <span className="text-[9px] font-bold">Warga</span>
+            </button>
+          </>
+        ) : (
+          <button
+            onClick={() => setActiveTab('dashboard')}
+            className="flex items-center gap-2 text-xs font-bold text-[#30D158] py-1"
+          >
+            <KeyRound className="w-4 h-4" />
+            <span>Login Pengurus</span>
+          </button>
+        )}
+      </div>
+
+      {/* MODAL INPUT TRANSAKSI (BOTTOM SHEET DI HP) */}
       {showAddTrx && (
-        <div className="fixed inset-0 bg-black/80 z-50 flex items-center justify-center p-4 backdrop-blur-md">
-          <div className="bg-[#1C1C1E] border border-white/10 rounded-[32px] p-6 max-w-md w-full shadow-2xl">
+        <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
+          <div className="bg-[#1C1C1E] border border-white/10 rounded-t-[32px] sm:rounded-[32px] p-6 max-w-md w-full shadow-2xl animate-slide-up">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-base font-extrabold text-white">Catat Pengeluaran Kas</h3>
-              <button onClick={() => setShowAddTrx(false)} className="text-slate-400 hover:text-white">
+              <h3 className="text-base font-extrabold text-white">Catat Kas ke Supabase</h3>
+              <button onClick={() => setShowAddTrx(false)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-5 h-5" />
               </button>
             </div>
-            <form onSubmit={(e) => {
-              e.preventDefault();
-              if (!newTrx.amount || !newTrx.description) return;
-              setExtraTransactions([
-                { id: `trx-${Date.now()}`, date: new Date().toISOString().split('T')[0], type: 'OUT', category: newTrx.category, amount: Number(newTrx.amount), desc: newTrx.description },
-                ...extraTransactions
-              ]);
-              setShowAddTrx(false);
-              setNewTrx({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
-            }} className="space-y-4 text-xs">
+            <form onSubmit={handleSaveTransaction} className="space-y-4 text-xs">
               <div>
-                <label className="block text-[11px] font-bold text-slate-400 mb-1">Kategori Biaya</label>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Jenis Kas</label>
+                <div className="grid grid-cols-2 gap-2">
+                  <button
+                    type="button"
+                    onClick={() => setNewTrx({ ...newTrx, type: 'IN' })}
+                    className={`min-h-[44px] rounded-[16px] font-bold border ${newTrx.type === 'IN' ? 'bg-[#30D158] text-black border-[#30D158]' : 'bg-[#2C2C2E] text-slate-300 border-white/10'}`}
+                  >
+                    Pemasukan (+)
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setNewTrx({ ...newTrx, type: 'OUT' })}
+                    className={`min-h-[44px] rounded-[16px] font-bold border ${newTrx.type === 'OUT' ? 'bg-rose-600 text-white border-rose-600' : 'bg-[#2C2C2E] text-slate-300 border-white/10'}`}
+                  >
+                    Pengeluaran (-)
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Kategori</label>
                 <select
                   value={newTrx.category}
                   onChange={(e) => setNewTrx({ ...newTrx, category: e.target.value })}
-                  className="w-full bg-[#2C2C2E] border border-white/10 rounded-[16px] p-2.5 text-white"
+                  className="w-full min-h-[44px] bg-[#2C2C2E] border border-white/10 rounded-[16px] p-2.5 text-white"
                 >
+                  <option value="Iuran Bulanan">Iuran Bulanan</option>
                   <option value="Keamanan & Kebersihan">Keamanan & Kebersihan</option>
                   <option value="Perawatan Lingkungan">Perawatan Lingkungan</option>
                   <option value="Sosial Kemasyarakatan">Sosial Kemasyarakatan</option>
+                  <option value="Lain-lain">Lain-lain</option>
                 </select>
               </div>
+
               <div>
                 <label className="block text-[11px] font-bold text-slate-400 mb-1">Nominal (Rp)</label>
                 <input
                   type="number"
-                  placeholder="Contoh: 250000"
+                  placeholder="Contoh: 150000"
                   value={newTrx.amount}
                   onChange={(e) => setNewTrx({ ...newTrx, amount: e.target.value })}
-                  className="w-full bg-[#2C2C2E] border border-white/10 rounded-[16px] p-2.5 text-white"
+                  className="w-full min-h-[44px] bg-[#2C2C2E] border border-white/10 rounded-[16px] px-3.5 py-2.5 text-white"
                   required
                 />
               </div>
+
               <div>
-                <label className="block text-[11px] font-bold text-slate-400 mb-1">Uraian Kebutuhan</label>
+                <label className="block text-[11px] font-bold text-slate-400 mb-1">Uraian / Keterangan</label>
                 <input
                   type="text"
-                  placeholder="Contoh: Pembelian lampu penerangan portal gang"
+                  placeholder="Contoh: Beli lampu portal gang"
                   value={newTrx.description}
                   onChange={(e) => setNewTrx({ ...newTrx, description: e.target.value })}
-                  className="w-full bg-[#2C2C2E] border border-white/10 rounded-[16px] p-2.5 text-white"
+                  className="w-full min-h-[44px] bg-[#2C2C2E] border border-white/10 rounded-[16px] px-3.5 py-2.5 text-white"
                   required
                 />
               </div>
-              <div className="flex justify-end gap-2 pt-2">
+
+              <div className="flex gap-2 pt-2">
                 <button
                   type="button"
                   onClick={() => setShowAddTrx(false)}
-                  className="px-4 py-2 border border-white/10 rounded-[16px] text-slate-300 hover:bg-white/5"
+                  className="w-1/2 min-h-[44px] border border-white/10 rounded-[16px] text-slate-300 font-bold"
                 >
                   Batal
                 </button>
                 <button
                   type="submit"
-                  className="px-4 py-2 bg-rose-600 text-white font-extrabold rounded-[16px] hover:bg-rose-500 shadow-lg"
+                  disabled={submittingTrx}
+                  className="w-1/2 min-h-[44px] bg-gradient-to-r from-emerald-600 to-[#30D158] text-black font-extrabold rounded-[16px] shadow-lg flex items-center justify-center gap-1.5"
                 >
-                  Simpan Transaksi
+                  {submittingTrx ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                  Simpan Supabase
                 </button>
               </div>
             </form>
