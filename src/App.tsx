@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useCallback } from 'react';
 import { 
   CheckCircle2, AlertCircle, Printer, 
   Plus, ArrowUpRight, ArrowDownRight,
@@ -32,8 +32,9 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // Status Database Supabase
+  // Status Database
   const [dbStatus, setDbStatus] = useState<'connected' | 'syncing' | 'offline'>('connected');
+  const [isSyncingData, setIsSyncingData] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
   // Form Login State
@@ -44,7 +45,7 @@ export default function App() {
 
   // Navigasi & Tampilan
   const [activeTab, setActiveTab] = useState<'dashboard' | 'matriks' | 'kas' | 'warga' | 'laporan' | 'publik'>('dashboard');
-  const [viewModeMobile, setViewModeMobile] = useState<'card' | 'table'>('card'); // Mode kartu ramah HP
+  const [viewModeMobile, setViewModeMobile] = useState<'card' | 'table'>('card');
 
   // Konfigurasi Lingkungan RT 02
   const [settings] = useState({
@@ -56,12 +57,12 @@ export default function App() {
     year: 2026,
   });
 
-  // Data 88 Warga & Transaksi Kas
+  // Data Warga & Transaksi Kas
   const [residents, setResidents] = useState<Resident[]>(parseResidents());
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDawis, setSelectedDawis] = useState('Semua');
 
-  // Transaksi Kas (Diambil dari Supabase)
+  // Transaksi Kas Live dari Database
   const [transactions, setTransactions] = useState<any[]>([
     { id: 'trx-1', date: '2026-10-02', type: 'OUT', category: 'Keamanan & Kebersihan', amount: 3500000, desc: 'Honor Penjaga Malam & Sampah' },
     { id: 'trx-2', date: '2026-10-15', type: 'OUT', category: 'Perawatan Lingkungan', amount: 850000, desc: 'Perbaikan Lampu Jalan Portal' }
@@ -72,7 +73,7 @@ export default function App() {
   const [newTrx, setNewTrx] = useState({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
   const [submittingTrx, setSubmittingTrx] = useState(false);
 
-  // Helper Toast Notifikasi
+  // Toast Notifikasi
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -88,8 +89,9 @@ export default function App() {
     return phone;
   };
 
-  // --- AMBIL DATA KAS DARI SUPABASE SAAT LOAD ---
-  const fetchSupabaseTransactions = async () => {
+  // --- AMBIL DATA TERUPDATE DARI DATABASE (SINKRONISASI AKTIF) ---
+  const fetchUpdatedDataFromDb = useCallback(async (isManualTrigger = false) => {
+    setIsSyncingData(true);
     setDbStatus('syncing');
     try {
       const { data, error } = await supabase
@@ -112,15 +114,23 @@ export default function App() {
         setTransactions(formatted);
       }
       setDbStatus('connected');
+      if (isManualTrigger) {
+        showToast('Data berhasil diperbarui dari database!');
+      }
     } catch (err: any) {
-      console.warn('Gagal koneksi Supabase, menggunakan data lokal:', err.message);
+      console.warn('Kendala koneksi database:', err.message);
       setDbStatus('offline');
+      if (isManualTrigger) {
+        alert(`Gagal mengambil data terbaru: ${err.message}`);
+      }
+    } finally {
+      setIsSyncingData(false);
     }
-  };
+  }, []);
 
   useEffect(() => {
-    fetchSupabaseTransactions();
-  }, []);
+    fetchUpdatedDataFromDb(false);
+  }, [fetchUpdatedDataFromDb]);
 
   // --- AUTENTIKASI DENGAN PASSWORD Bismillah#123 ---
   const handleLoginSubmit = (e: React.FormEvent) => {
@@ -145,7 +155,7 @@ export default function App() {
         setActiveTab('dashboard');
         showToast(`Selamat datang, ${userData.name}!`);
       } else {
-        setLoginError('Password tidak sesuai! Periksa kembali.');
+        setLoginError('Password tidak sesuai. Periksa kembali.');
       }
       setIsAuthenticating(false);
     }, 350);
@@ -157,10 +167,10 @@ export default function App() {
     setSessionToken(null);
     setCurrentUser(null);
     setActiveTab('publik');
-    showToast('Berhasil logout.');
+    showToast('Berhasil keluar.');
   };
 
-  // --- SIMPAN PENGELUARAN / KAS KE SUPABASE ---
+  // --- SIMPAN TRANSAKSI PENGELUARAN / PEMASUKAN KE DATABASE ---
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTrx.amount || !newTrx.description) return;
@@ -170,7 +180,6 @@ export default function App() {
     const dateToday = new Date().toISOString().split('T')[0];
     const trxNumber = `KAS-${newTrx.type}-${Date.now().toString().slice(-6)}`;
 
-    // 1. Simpan ke Supabase
     try {
       const { data, error } = await supabase.from('transactions').insert([{
         transaction_number: trxNumber,
@@ -185,7 +194,6 @@ export default function App() {
 
       if (error) throw error;
 
-      // 2. Perbarui state lokal
       const newEntry = {
         id: data ? data[0].id : `trx-${Date.now()}`,
         date: dateToday,
@@ -196,18 +204,18 @@ export default function App() {
         recorded_by: currentUser?.name || 'Pengurus'
       };
 
-      setTransactions([newEntry, ...transactions]);
+      setTransactions(prev => [newEntry, ...prev]);
       setShowAddTrx(false);
       setNewTrx({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
-      showToast('Transaksi kas berhasil tersimpan di Supabase!');
+      showToast('Transaksi kas berhasil disimpan!');
     } catch (err: any) {
-      alert(`Gagal menyimpan ke Supabase: ${err.message}. Periksa koneksi internet.`);
+      alert(`Gagal menyimpan: ${err.message}.\n\nSolusi: Pastikan file src/supabaseClient.ts sudah diperbarui.`);
     } finally {
       setSubmittingTrx(false);
     }
   };
 
-  // --- SIMPAN PEMBAYARAN IURAN KE SUPABASE & STATE ---
+  // --- CATAT PEMBAYARAN IURAN WARGA ---
   const handleQuickPay = async (resId: string, month: string) => {
     if (!sessionToken) {
       alert('Akses Ditolak: Anda wajib login sebagai Pengurus untuk mencatat kas!');
@@ -229,7 +237,6 @@ export default function App() {
     const nominal = Math.min(Number(input), remaining);
     const dateToday = new Date().toISOString().split('T')[0];
 
-    // 1. Kirim Transaksi Kas Masuk ke Supabase
     try {
       const descText = `Iuran ${month} an. ${target.name} (${target.house})`;
       const { data, error } = await supabase.from('transactions').insert([{
@@ -245,7 +252,6 @@ export default function App() {
 
       if (error) console.warn('Supabase log:', error.message);
 
-      // 2. Update state kas masuk
       const newKasEntry = {
         id: data ? data[0].id : `trx-${Date.now()}`,
         date: dateToday,
@@ -255,10 +261,9 @@ export default function App() {
         desc: descText,
         recorded_by: currentUser?.name || 'Bendahara'
       };
-      setTransactions([newKasEntry, ...transactions]);
+      setTransactions(prev => [newKasEntry, ...prev]);
 
-      // 3. Update status pembayaran warga di tabel
-      setResidents(residents.map(r => {
+      setResidents(prev => prev.map(r => {
         if (r.id === resId) {
           return {
             ...r,
@@ -271,9 +276,9 @@ export default function App() {
         return r;
       }));
 
-      showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} masuk ke kas Supabase!`);
+      showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} berhasil dicatat!`);
     } catch (err: any) {
-      alert(`Peringatan: Gagal mengirim ke Supabase: ${err.message}`);
+      alert(`Peringatan: ${err.message}`);
     }
   };
 
@@ -345,15 +350,15 @@ export default function App() {
   return (
     <div className="min-h-screen bg-[#000000] text-slate-100 font-sans selection:bg-[#30D158] selection:text-black pb-28 sm:pb-20">
       
-      {/* TOAST NOTIFIKASI MELAYANG (iOS STYLE) */}
+      {/* TOAST NOTIFIKASI */}
       {toastMessage && (
-        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-[#1C1C1E]/95 border border-[#30D158]/50 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-semibold backdrop-blur-xl animate-fade-in">
+        <div className="fixed top-14 left-1/2 -translate-x-1/2 z-50 bg-[#1C1C1E]/95 border border-[#30D158]/50 text-white px-5 py-2.5 rounded-full shadow-2xl flex items-center gap-2 text-xs font-semibold backdrop-blur-xl">
           <Check className="w-4 h-4 text-[#30D158]" />
           <span>{toastMessage}</span>
         </div>
       )}
 
-      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA & INDIKATOR DATABASE */}
+      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA */}
       <div className="sticky top-0 z-40 bg-[#000000]/90 backdrop-blur-2xl border-b border-white/[0.08] px-4 py-2.5">
         <div className="max-w-6xl mx-auto flex justify-between items-center text-xs">
           <div className="flex items-center gap-2 font-semibold tracking-tight text-white">
@@ -366,7 +371,6 @@ export default function App() {
             <span className="text-[11px] font-semibold text-emerald-400 tracking-wide">RT 02 TPA</span>
           </div>
 
-          {/* Status Koneksi Supabase */}
           <div className="flex items-center gap-1.5 text-[10px] font-mono text-slate-400">
             <Database className={`w-3.5 h-3.5 ${dbStatus === 'connected' ? 'text-[#30D158]' : 'text-amber-400'}`} />
             <span className="hidden sm:inline">{dbStatus === 'connected' ? 'Cloud Sync' : 'Offline'}</span>
@@ -381,7 +385,7 @@ export default function App() {
             <h1 className="text-xl sm:text-2xl font-black tracking-tight text-white">
               {settings.rtName}
             </h1>
-            <p className="text-[11px] text-slate-400">Kas Terverifikasi • Terkoneksi Database Supabase</p>
+            <p className="text-[11px] text-slate-400">Sistem Keuangan Mandiri • Transparan & Akuntabel</p>
           </div>
 
           <div className="flex items-center gap-2">
@@ -414,7 +418,7 @@ export default function App() {
         </div>
       </header>
 
-      {/* 3. MENU NAVIGASI DESKTOP & TABLET */}
+      {/* 3. MENU NAVIGASI DESKTOP */}
       <nav className="max-w-6xl mx-auto px-4 my-2 hidden sm:block">
         <div className="bg-[#1C1C1E]/80 border border-white/10 p-1.5 rounded-[22px] backdrop-blur-xl flex gap-1.5 overflow-x-auto shadow-xl">
           {sessionToken && (
@@ -527,10 +531,18 @@ export default function App() {
             <div className="bg-[#1C1C1E]/95 border border-white/10 rounded-[30px] p-5 sm:p-6 shadow-2xl relative overflow-hidden backdrop-blur-xl">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="space-y-1">
-                  <div className="inline-flex items-center gap-1.5 px-3 py-0.5 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-[11px] font-bold">
-                    <Activity className="w-3.5 h-3.5" />
-                    <span>Sinkron Database Supabase</span>
-                  </div>
+                  
+                  {/* BADGE SINKRON DATABASE INTERAKTIF */}
+                  <button
+                    onClick={() => fetchUpdatedDataFromDb(true)}
+                    disabled={isSyncingData}
+                    className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-[11px] font-bold hover:bg-emerald-900/60 active:scale-95 transition cursor-pointer"
+                    title="Klik untuk mengambil data kas terupdate dari database"
+                  >
+                    <RefreshCw className={`w-3.5 h-3.5 ${isSyncingData ? 'animate-spin' : ''}`} />
+                    <span>{isSyncingData ? 'Memperbarui Data...' : 'Sinkron Database'}</span>
+                  </button>
+
                   <p className="text-xs text-slate-400 font-medium">Saldo Kas Riil Saat Ini</p>
                   <h2 className="text-3xl sm:text-5xl font-black text-white tracking-tight">
                     {formatRupiah(stats.saldoAkhir)}
@@ -540,7 +552,7 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* BATTERY-STYLE CIRCULAR GAUGES */}
+                {/* CIRCULAR GAUGES */}
                 <div className="w-full sm:w-auto bg-[#000000]/60 border border-white/10 rounded-[24px] p-3 flex items-center justify-around gap-4 shadow-inner">
                   <div className="flex flex-col items-center">
                     <div className="relative w-14 h-14 flex items-center justify-center">
@@ -571,16 +583,16 @@ export default function App() {
               </div>
             </div>
 
-            {/* BENTO KARTU FINANSIAL RESPOCIVE */}
+            {/* BENTO KARTU FINANSIAL */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Iuran (Okt)</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Iuran ({settings.currentMonth})</span>
                 <h4 className="text-lg sm:text-xl font-black text-white mt-1">{formatRupiah(stats.iuranBulanIni)}</h4>
                 <p className="text-[10px] text-[#30D158] mt-1">{stats.kkLunasBulanIni} KK Lunas</p>
               </div>
 
               <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
-                <span className="text-[10px] font-bold text-slate-400 uppercase">Piutang (Okt)</span>
+                <span className="text-[10px] font-bold text-slate-400 uppercase">Piutang ({settings.currentMonth})</span>
                 <h4 className="text-lg sm:text-xl font-black text-amber-400 mt-1">{formatRupiah(stats.piutangBulanIni)}</h4>
                 <p className="text-[10px] text-slate-400 mt-1">Sisa belum bayar</p>
               </div>
@@ -594,11 +606,11 @@ export default function App() {
               <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Total Beban</span>
                 <h4 className="text-lg sm:text-xl font-black text-rose-400 mt-1">{formatRupiah(stats.totalPengeluaran)}</h4>
-                <p className="text-[10px] text-slate-400 mt-1">Biaya Lingkungan</p>
+                <p className="text-[10px] text-slate-400 mt-1">Operasional RT</p>
               </div>
             </div>
 
-            {/* PROPORSI IURAN DAWIS CHART */}
+            {/* DAWIS PIE / METRIC CARDS */}
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <h3 className="font-extrabold text-sm text-white flex items-center gap-1.5">
@@ -625,11 +637,9 @@ export default function App() {
           </div>
         )}
 
-        {/* --- TAB 2: IURAN 12 BULAN (DENGAN TAMPILAN KARTU KHUSUS MOBILE) --- */}
+        {/* --- TAB 2: IURAN 12 BULAN --- */}
         {activeTab === 'matriks' && sessionToken && (
           <div className="space-y-3">
-            
-            {/* FILTER & PENCARIAN TOUCH-FRIENDLY */}
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-3.5 space-y-3 shadow-xl">
               <div className="flex items-center gap-2 bg-[#2C2C2E] border border-white/10 rounded-[16px] px-3.5 py-2">
                 <Search className="w-4 h-4 text-slate-400" />
@@ -655,7 +665,6 @@ export default function App() {
                   ))}
                 </div>
 
-                {/* Saklar Tampilan Kartu / Tabel di Layar HP */}
                 <div className="flex sm:hidden bg-[#2C2C2E] p-1 rounded-xl">
                   <button
                     onClick={() => setViewModeMobile('card')}
@@ -673,7 +682,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* A. TAMPILAN KARTU WARGA (SANGAT NYAMAN DI LAYAR HP) */}
+            {/* A. TAMPILAN KARTU KHUSUS HP */}
             <div className={`${viewModeMobile === 'card' ? 'block sm:hidden' : 'hidden'} space-y-2.5`}>
               {filteredResidents.map((r) => {
                 const paidThisMonth = r.payments[settings.currentMonth] || 0;
@@ -698,7 +707,6 @@ export default function App() {
                       </button>
                     </div>
 
-                    {/* Quick Button Catat Bayar Bulan Berjalan */}
                     <div className="flex justify-between items-center pt-2 border-t border-white/5">
                       <div className="text-xs">
                         <span className="text-slate-400">Status {settings.currentMonth}: </span>
@@ -716,7 +724,6 @@ export default function App() {
                       )}
                     </div>
 
-                    {/* Indikator Titik 12 Bulan (Jan-Des) */}
                     <div className="grid grid-cols-12 gap-1 pt-1">
                       {MONTHS.map(m => {
                         const p = r.payments[m] || 0;
@@ -740,7 +747,7 @@ export default function App() {
               })}
             </div>
 
-            {/* B. TAMPILAN TABEL MATRIKS (DESKTOP & OPSIONAL HP) */}
+            {/* B. TAMPILAN TABEL MATRIKS */}
             <div className={`${viewModeMobile === 'table' ? 'block' : 'hidden sm:block'} bg-[#1C1C1E] border border-white/10 rounded-[24px] overflow-hidden shadow-2xl`}>
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs border-collapse">
@@ -804,13 +811,13 @@ export default function App() {
           </div>
         )}
 
-        {/* --- TAB 3: BUKU KAS OPERASIONAL (TERHUBUNG KE SUPABASE) --- */}
+        {/* --- TAB 3: BUKU KAS OPERASIONAL --- */}
         {activeTab === 'kas' && sessionToken && (
           <div className="space-y-4">
             <div className="flex justify-between items-center">
               <div>
                 <h2 className="text-lg sm:text-xl font-extrabold text-white">Buku Kas Operasional RT</h2>
-                <p className="text-xs text-slate-400">Data live dari tabel Supabase</p>
+                <p className="text-xs text-slate-400">Seluruh arus masuk dan keluar tercatat otomatis</p>
               </div>
               <button
                 onClick={() => setShowAddTrx(true)}
@@ -951,7 +958,7 @@ export default function App() {
 
       </main>
 
-      {/* 5. BOTTOM NAVIGATION BAR KHUSUS HP (RAMAH JEMPOL) */}
+      {/* 5. BOTTOM NAVIGATION BAR KHUSUS HP */}
       <div className="fixed bottom-0 left-0 right-0 z-40 bg-[#1C1C1E]/95 border-t border-white/10 backdrop-blur-2xl px-2 py-2 sm:hidden flex justify-around items-center">
         {sessionToken ? (
           <>
@@ -995,12 +1002,12 @@ export default function App() {
         )}
       </div>
 
-      {/* MODAL INPUT TRANSAKSI (BOTTOM SHEET DI HP) */}
+      {/* MODAL INPUT TRANSAKSI (LABEL BARU: Catat Kas & Simpan) */}
       {showAddTrx && (
         <div className="fixed inset-0 bg-black/80 z-50 flex items-end sm:items-center justify-center p-0 sm:p-4 backdrop-blur-md">
           <div className="bg-[#1C1C1E] border border-white/10 rounded-t-[32px] sm:rounded-[32px] p-6 max-w-md w-full shadow-2xl animate-slide-up">
             <div className="flex justify-between items-center mb-4">
-              <h3 className="text-base font-extrabold text-white">Catat Kas ke Supabase</h3>
+              <h3 className="text-base font-extrabold text-white">Catat Kas</h3>
               <button onClick={() => setShowAddTrx(false)} className="text-slate-400 hover:text-white p-1">
                 <X className="w-5 h-5" />
               </button>
@@ -1033,10 +1040,10 @@ export default function App() {
                   onChange={(e) => setNewTrx({ ...newTrx, category: e.target.value })}
                   className="w-full min-h-[44px] bg-[#2C2C2E] border border-white/10 rounded-[16px] p-2.5 text-white"
                 >
-                  <option value="Iuran Bulanan">Iuran Bulanan</option>
                   <option value="Keamanan & Kebersihan">Keamanan & Kebersihan</option>
                   <option value="Perawatan Lingkungan">Perawatan Lingkungan</option>
                   <option value="Sosial Kemasyarakatan">Sosial Kemasyarakatan</option>
+                  <option value="Iuran Bulanan">Iuran Bulanan</option>
                   <option value="Lain-lain">Lain-lain</option>
                 </select>
               </div>
@@ -1079,7 +1086,7 @@ export default function App() {
                   className="w-1/2 min-h-[44px] bg-gradient-to-r from-emerald-600 to-[#30D158] text-black font-extrabold rounded-[16px] shadow-lg flex items-center justify-center gap-1.5"
                 >
                   {submittingTrx ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
-                  Simpan Supabase
+                  Simpan
                 </button>
               </div>
             </form>
