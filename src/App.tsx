@@ -33,7 +33,7 @@ export default function App() {
     return saved ? JSON.parse(saved) : null;
   });
 
-  // Database Passwords (Tersimpan di LocalStorage & Dapat Diubah Admin)
+  // Password Akun Pengurus
   const [passwords, setPasswords] = useState<{ [key: string]: string }>(() => {
     const saved = localStorage.getItem('rt2_passwords');
     return saved ? JSON.parse(saved) : {
@@ -43,7 +43,7 @@ export default function App() {
     };
   });
 
-  // Konfigurasi Lingkungan RT 02 (Dapat Diubah Admin)
+  // Konfigurasi RT 02
   const [settings, setSettings] = useState(() => {
     const saved = localStorage.getItem('rt2_settings');
     return saved ? JSON.parse(saved) : {
@@ -62,18 +62,18 @@ export default function App() {
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Form Login State
+  // Form Login
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginRole, setLoginRole] = useState<'bendahara' | 'ketua_rt' | 'admin'>('bendahara');
   const [loginPassword, setLoginPassword] = useState('');
   const [loginError, setLoginError] = useState('');
   const [isAuthenticating, setIsAuthenticating] = useState(false);
 
-  // Navigasi Tampilan
+  // Navigasi & Tampilan
   const [activeTab, setActiveTab] = useState<'dashboard' | 'matriks' | 'kas' | 'warga' | 'laporan' | 'pengaturan'>('dashboard');
   const [viewModeMobile, setViewModeMobile] = useState<'card' | 'table'>('card');
 
-  // Form Pengaturan Admin State
+  // Form Pengaturan Admin
   const [adminForm, setAdminForm] = useState({
     leader: settings.leader,
     treasurer: settings.treasurer,
@@ -87,18 +87,17 @@ export default function App() {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDawis, setSelectedDawis] = useState('Semua');
 
-  // Transaksi Kas Live dari Database
+  // Transaksi Kas Live dari Supabase
   const [transactions, setTransactions] = useState<any[]>([
     { id: 'trx-1', date: '2026-10-02', type: 'OUT', category: 'Keamanan & Kebersihan', amount: 3500000, desc: 'Honor Penjaga Malam & Sampah' },
     { id: 'trx-2', date: '2026-10-15', type: 'OUT', category: 'Perawatan Lingkungan', amount: 850000, desc: 'Perbaikan Lampu Jalan Portal' }
   ]);
 
-  // Modal Catat Kas
+  // Modal State
   const [showAddTrx, setShowAddTrx] = useState(false);
   const [newTrx, setNewTrx] = useState({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
   const [submittingTrx, setSubmittingTrx] = useState(false);
 
-  // Toast Notifikasi
   const showToast = (msg: string) => {
     setToastMessage(msg);
     setTimeout(() => setToastMessage(null), 3500);
@@ -114,20 +113,21 @@ export default function App() {
     return phone;
   };
 
-  // --- AMBIL DATA KAS TERBARU DARI DATABASE ---
+  // --- AMBIL DATA KAS & IURAN DARI SUPABASE (SINKRONISASI AKTIF) ---
   const fetchUpdatedDataFromDb = useCallback(async (isManualTrigger = false) => {
     setIsSyncingData(true);
     setDbStatus('syncing');
     try {
-      const { data, error } = await supabase
+      // 1. Ambil data kas
+      const { data: trxData, error: trxErr } = await supabase
         .from('transactions')
         .select('*')
         .order('created_at', { ascending: false });
 
-      if (error) throw error;
+      if (trxErr) throw trxErr;
 
-      if (data && data.length > 0) {
-        const formatted = data.map(item => ({
+      if (trxData && trxData.length > 0) {
+        const formatted = trxData.map(item => ({
           id: item.id,
           date: item.date || item.created_at?.split('T')[0],
           type: item.type,
@@ -138,6 +138,27 @@ export default function App() {
         }));
         setTransactions(formatted);
       }
+
+      // 2. Ambil data iuran bulanan dari tabel dues_payments
+      const { data: duesData, error: duesErr } = await supabase
+        .from('dues_payments')
+        .select('*');
+
+      if (!duesErr && duesData && duesData.length > 0) {
+        setResidents(prevResidents => {
+          return prevResidents.map(r => {
+            const matches = duesData.filter(d => d.resident_code === r.code);
+            if (matches.length === 0) return r;
+
+            const updatedPayments = { ...r.payments };
+            matches.forEach(m => {
+              updatedPayments[m.month] = Number(m.amount_paid);
+            });
+            return { ...r, payments: updatedPayments };
+          });
+        });
+      }
+
       setDbStatus('connected');
       if (isManualTrigger) {
         showToast('Data berhasil diperbarui dari database!');
@@ -157,7 +178,7 @@ export default function App() {
     fetchUpdatedDataFromDb(false);
   }, [fetchUpdatedDataFromDb]);
 
-  // --- AUTENTIKASI LOGIN ---
+  // --- LOGIN PENGURUS ---
   const handleLoginSubmit = (e: React.FormEvent) => {
     e.preventDefault();
     setIsAuthenticating(true);
@@ -181,7 +202,7 @@ export default function App() {
         setActiveTab('dashboard');
         showToast(`Login berhasil sebagai ${userData.name}!`);
       } else {
-        setLoginError('Password tidak sesuai. Periksa kembali kata sandi Anda.');
+        setLoginError('Password tidak sesuai. Periksa kembali.');
       }
       setIsAuthenticating(false);
     }, 350);
@@ -193,14 +214,14 @@ export default function App() {
     setSessionToken(null);
     setCurrentUser(null);
     setActiveTab('dashboard');
-    showToast('Berhasil keluar. Kembali ke Mode Warga.');
+    showToast('Berhasil keluar.');
   };
 
-  // --- SIMPAN PENGATURAN SUPERADMIN ---
+  // --- PENGATURAN SUPERADMIN ---
   const handleSaveAdminSettings = (e: React.FormEvent) => {
     e.preventDefault();
     if (currentUser?.role !== 'admin') {
-      alert('Hanya Admin dengan privilege tinggi yang dapat mengubah konfigurasi ini!');
+      alert('Hanya Admin yang dapat mengubah pengaturan ini!');
       return;
     }
 
@@ -214,7 +235,6 @@ export default function App() {
     setSettings(updatedSettings);
     localStorage.setItem('rt2_settings', JSON.stringify(updatedSettings));
 
-    // Update password jika diisi
     if (adminForm.newPassword.trim()) {
       const updatedPasswords = {
         ...passwords,
@@ -223,13 +243,13 @@ export default function App() {
       setPasswords(updatedPasswords);
       localStorage.setItem('rt2_passwords', JSON.stringify(updatedPasswords));
       setAdminForm(prev => ({ ...prev, newPassword: '' }));
-      showToast(`Pengaturan & Password baru untuk ${adminForm.targetRoleToChange} berhasil disimpan!`);
+      showToast(`Password untuk ${adminForm.targetRoleToChange} berhasil diganti!`);
     } else {
-      showToast('Konfigurasi Pengurus & Iuran berhasil diperbarui!');
+      showToast('Konfigurasi pengurus berhasil diperbarui!');
     }
   };
 
-  // --- SIMPAN TRANSAKSI KAS KE DATABASE ---
+  // --- SIMPAN KAS KELUAR/MASUK KE SUPABASE ---
   const handleSaveTransaction = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newTrx.amount || !newTrx.description) return;
@@ -266,15 +286,15 @@ export default function App() {
       setTransactions(prev => [newEntry, ...prev]);
       setShowAddTrx(false);
       setNewTrx({ type: 'OUT', category: 'Keamanan & Kebersihan', amount: '', description: '' });
-      showToast('Transaksi kas berhasil disimpan!');
+      showToast('Transaksi kas berhasil disimpan ke Supabase!');
     } catch (err: any) {
-      alert(`Gagal menyimpan: ${err.message}.`);
+      alert(`Gagal menyimpan transaksi: ${err.message}`);
     } finally {
       setSubmittingTrx(false);
     }
   };
 
-  // --- CATAT PEMBAYARAN IURAN ---
+  // --- SIMPAN PEMBAYARAN IURAN WARGA KE SUPABASE (DUES_PAYMENTS & TRANSACTIONS) ---
   const handleQuickPay = async (resId: string, month: string) => {
     if (!sessionToken) {
       alert('Akses Ditolak: Anda wajib login sebagai Pengurus untuk mencatat iuran!');
@@ -294,11 +314,24 @@ export default function App() {
     if (!input || isNaN(Number(input)) || Number(input) <= 0) return;
 
     const nominal = Math.min(Number(input), remaining);
+    const newPaid = currentPaid + nominal;
     const dateToday = new Date().toISOString().split('T')[0];
 
     try {
+      // 1. Simpan ke tabel dues_payments Supabase (menggunakan upsert)
+      const { error: duesErr } = await supabase.from('dues_payments').upsert({
+        resident_code: target.code,
+        month: month,
+        year: settings.year,
+        amount_paid: newPaid,
+        updated_at: new Date().toISOString()
+      }, { onConflict: 'resident_code,month,year' });
+
+      if (duesErr) throw duesErr;
+
+      // 2. Simpan ke tabel transactions Supabase sebagai kas masuk
       const descText = `Iuran ${month} an. ${target.name} (${target.house})`;
-      const { data, error } = await supabase.from('transactions').insert([{
+      const { data: trxData, error: trxErr } = await supabase.from('transactions').insert([{
         transaction_number: `IURAN-${Date.now().toString().slice(-6)}`,
         date: dateToday,
         type: 'IN',
@@ -309,10 +342,11 @@ export default function App() {
         status: 'VALID'
       }]).select();
 
-      if (error) console.warn('Supabase log:', error.message);
+      if (trxErr) throw trxErr;
 
+      // 3. Perbarui state lokal buku kas
       const newKasEntry = {
-        id: data ? data[0].id : `trx-${Date.now()}`,
+        id: trxData ? trxData[0].id : `trx-${Date.now()}`,
         date: dateToday,
         type: 'IN',
         category: 'Iuran Bulanan',
@@ -322,22 +356,23 @@ export default function App() {
       };
       setTransactions(prev => [newKasEntry, ...prev]);
 
+      // 4. Perbarui status iuran warga di layar
       setResidents(prev => prev.map(r => {
         if (r.id === resId) {
           return {
             ...r,
             payments: {
               ...r.payments,
-              [month]: currentPaid + nominal
+              [month]: newPaid
             }
           };
         }
         return r;
       }));
 
-      showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} berhasil dicatat!`);
+      showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} tersimpan di database Supabase!`);
     } catch (err: any) {
-      alert(`Peringatan: ${err.message}`);
+      alert(`Gagal menyimpan ke database Supabase:\n${err.message}\n\nPastikan Anda sudah menjalankan script SQL tabel 'dues_payments' di Langkah 1.`);
     }
   };
 
@@ -351,7 +386,7 @@ export default function App() {
     window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  // --- STATISTIK & KALKULASI ARUS KAS LENGKAP ---
+  // --- STATISTIK & ARUS KAS LENGKAP ---
   const stats = useMemo(() => {
     let totalIuranTerkumpul = 0;
     let iuranBulanIni = 0;
@@ -393,13 +428,12 @@ export default function App() {
     const piutangBulanIni = targetBulanIni - iuranBulanIni;
     const kepatuhanPercent = kkTotalAktif > 0 ? Math.round((kkLunasBulanIni / kkTotalAktif) * 100) : 0;
 
-    // Hitung Arus Kas Masuk & Keluar Sebulan Terakhir (Bulan Berjalan)
     const extraKasMasukBulanIni = transactions
       .filter(t => t.type === 'IN' && t.category !== 'Iuran Bulanan')
       .reduce((acc, curr) => acc + curr.amount, 0);
 
     const kasMasukSebulan = iuranBulanIni + extraKasMasukBulanIni;
-    const kasKeluarSebulan = totalPengeluaran; // Beban sebulan
+    const kasKeluarSebulan = totalPengeluaran;
     const netArusKasSebulan = kasMasukSebulan - kasKeluarSebulan;
 
     return { 
@@ -430,7 +464,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 1. STATUS BAR DENGAN JAM REAL-TIME */}
+      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA */}
       <div className="sticky top-0 z-40 bg-[#000000]/90 backdrop-blur-2xl border-b border-white/[0.08] px-4 py-2.5">
         <div className="max-w-6xl mx-auto flex justify-between items-center text-xs">
           <div className="flex items-center gap-2 font-semibold tracking-tight text-white">
@@ -458,7 +492,7 @@ export default function App() {
               {settings.rtName}
             </h1>
             <p className="text-[11px] text-slate-400">
-              {sessionToken ? `Akses ${currentUser?.role.replace('_', ' ').toUpperCase()} • Pengurus Aktif` : 'Mode Warga • Dashboard Terbuka & Transparan'}
+              {sessionToken ? `Akses ${currentUser?.role.replace('_', ' ').toUpperCase()} • Pengurus Aktif` : 'Mode Warga • Transparan & Akuntabel'}
             </p>
           </div>
 
@@ -544,21 +578,21 @@ export default function App() {
       {/* 4. KONTEN UTAMA */}
       <main className="max-w-6xl mx-auto px-4 mt-3 space-y-4">
 
-        {/* --- TAB 1: DASHBOARD (SEKARANG TAMPIL DI MODE WARGA & PENGURUS) --- */}
+        {/* --- TAB 1: DASHBOARD --- */}
         {activeTab === 'dashboard' && (
           <div className="space-y-4">
             
-            {/* HERO SALDO KAS DENGAN SINKRON DATABASE AKTIF */}
+            {/* HERO SALDO KAS */}
             <div className="bg-[#1C1C1E]/95 border border-white/10 rounded-[30px] p-5 sm:p-6 shadow-2xl relative overflow-hidden backdrop-blur-xl">
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="space-y-1">
                   
-                  {/* BADGE SINKRON DATABASE (MEMPERBARUI DARI DATABASE) */}
+                  {/* BADGE SINKRON DATABASE AKTIF */}
                   <button
                     onClick={() => fetchUpdatedDataFromDb(true)}
                     disabled={isSyncingData}
                     className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-emerald-950/60 border border-emerald-500/30 text-[#30D158] text-[11px] font-bold hover:bg-emerald-900/60 active:scale-95 transition cursor-pointer"
-                    title="Klik untuk mengambil data kas terupdate dari database"
+                    title="Klik untuk mengambil data kas & iuran terupdate dari Supabase"
                   >
                     <RefreshCw className={`w-3.5 h-3.5 ${isSyncingData ? 'animate-spin' : ''}`} />
                     <span>{isSyncingData ? 'Memperbarui Data...' : 'Sinkron Database'}</span>
@@ -573,7 +607,7 @@ export default function App() {
                   </p>
                 </div>
 
-                {/* CIRCULAR GAUGES KEPATUHAN & IURAN BULANAN */}
+                {/* CIRCULAR GAUGES */}
                 <div className="w-full sm:w-auto bg-[#000000]/60 border border-white/10 rounded-[24px] p-3 flex items-center justify-around gap-4 shadow-inner">
                   <div className="flex flex-col items-center">
                     <div className="relative w-14 h-14 flex items-center justify-center">
@@ -604,7 +638,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* --- KARTU BARU: ARUS KAS MASUK & KELUAR SEBULAN TERAKHIR --- */}
+            {/* ARUS KAS SEBULAN TERAKHIR */}
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl">
               <div className="flex justify-between items-center mb-3">
                 <div className="flex items-center gap-2">
@@ -613,7 +647,7 @@ export default function App() {
                   </div>
                   <div>
                     <h3 className="font-extrabold text-sm text-white">Arus Kas Sebulan Terakhir ({settings.currentMonth} {settings.year})</h3>
-                    <p className="text-[10px] text-slate-400">Ringkasan pergerakan kas masuk vs kas keluar operasional</p>
+                    <p className="text-[10px] text-slate-400">Pemasukan vs Pengeluaran Lingkungan</p>
                   </div>
                 </div>
                 <span className={`text-[11px] font-black px-3 py-1 rounded-full border ${
@@ -658,7 +692,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* 4 BENTO KARTU FINANSIAL */}
+            {/* 4 BENTO KARTU METRIK */}
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <div className="bg-[#1C1C1E] border border-white/10 rounded-[24px] p-4 flex flex-col justify-between">
                 <span className="text-[10px] font-bold text-slate-400 uppercase">Iuran ({settings.currentMonth})</span>
@@ -709,7 +743,7 @@ export default function App() {
               </div>
             </div>
 
-            {/* DAFTAR PENGELUARAN KAS TERBUKA (TERLIHAT OLEH WARGA) */}
+            {/* RINCIAN PENGELUARAN TERBUKA UNTUK WARGA */}
             <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl space-y-3">
               <h3 className="font-extrabold text-sm text-white">Rincian Pengeluaran Operasional Kas Lingkungan</h3>
               <div className="divide-y divide-white/5 text-xs">
@@ -1006,7 +1040,7 @@ export default function App() {
                 </div>
               </div>
 
-              {/* Tanda tangan dinamis sesuai pengaturan superadmin */}
+              {/* Tanda tangan pengurus yang terhubung ke pengaturan */}
               <div className="mt-8 grid grid-cols-2 text-center text-xs">
                 <div>
                   <p>Ketua RT 02</p>
@@ -1023,7 +1057,7 @@ export default function App() {
           </div>
         )}
 
-        {/* --- TAB 6: PENGATURAN SUPERADMIN (PRIVILEGE TINGGI ADMIN) --- */}
+        {/* --- TAB 6: PENGATURAN SUPERADMIN --- */}
         {activeTab === 'pengaturan' && currentUser?.role === 'admin' && (
           <div className="bg-[#1C1C1E] border border-white/10 rounded-[30px] p-6 max-w-xl mx-auto shadow-2xl space-y-6">
             <div className="flex items-center gap-3 border-b border-white/10 pb-4">
