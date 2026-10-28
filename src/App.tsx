@@ -62,7 +62,7 @@ export default function App() {
   const [isSyncingData, setIsSyncingData] = useState(false);
   const [toastMessage, setToastMessage] = useState<string | null>(null);
 
-  // Form Login
+  // Form Login State
   const [showLoginModal, setShowLoginModal] = useState(false);
   const [loginRole, setLoginRole] = useState<'bendahara' | 'ketua_rt' | 'admin'>('bendahara');
   const [loginPassword, setLoginPassword] = useState('');
@@ -72,8 +72,9 @@ export default function App() {
   // Navigasi & Tampilan
   const [activeTab, setActiveTab] = useState<'dashboard' | 'matriks' | 'kas' | 'warga' | 'laporan' | 'pengaturan'>('dashboard');
   const [viewModeMobile, setViewModeMobile] = useState<'card' | 'table'>('card');
+  const [dashboardTrxFilter, setDashboardTrxFilter] = useState<'ALL' | 'IN' | 'OUT'>('ALL');
 
-  // Form Pengaturan Admin
+  // Form Pengaturan Admin State
   const [adminForm, setAdminForm] = useState({
     leader: settings.leader,
     treasurer: settings.treasurer,
@@ -103,8 +104,10 @@ export default function App() {
     setTimeout(() => setToastMessage(null), 3500);
   };
 
+  // FORMAT RUPIAH ANTI MINUS GANDA
   const formatRupiah = (val: number) => {
-    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(val || 0);
+    const safeVal = Math.abs(Number(val) || 0);
+    return new Intl.NumberFormat('id-ID', { style: 'currency', currency: 'IDR', maximumFractionDigits: 0 }).format(safeVal);
   };
 
   const maskPhone = (phone: string) => {
@@ -132,7 +135,7 @@ export default function App() {
           date: item.date || item.created_at?.split('T')[0],
           type: item.type,
           category: item.category,
-          amount: Number(item.amount),
+          amount: Math.abs(Number(item.amount)),
           desc: item.description,
           recorded_by: item.recorded_by
         }));
@@ -152,7 +155,7 @@ export default function App() {
 
             const updatedPayments = { ...r.payments };
             matches.forEach(m => {
-              updatedPayments[m.month] = Number(m.amount_paid);
+              updatedPayments[m.month] = Math.abs(Number(m.amount_paid));
             });
             return { ...r, payments: updatedPayments };
           });
@@ -229,7 +232,7 @@ export default function App() {
       ...settings,
       leader: adminForm.leader.trim() || settings.leader,
       treasurer: adminForm.treasurer.trim() || settings.treasurer,
-      defaultDues: Number(adminForm.defaultDues) || settings.defaultDues,
+      defaultDues: Math.abs(Number(adminForm.defaultDues)) || settings.defaultDues,
     };
 
     setSettings(updatedSettings);
@@ -255,7 +258,7 @@ export default function App() {
     if (!newTrx.amount || !newTrx.description) return;
     setSubmittingTrx(true);
 
-    const nominal = Number(newTrx.amount);
+    const nominal = Math.abs(Number(newTrx.amount));
     const dateToday = new Date().toISOString().split('T')[0];
     const trxNumber = `KAS-${newTrx.type}-${Date.now().toString().slice(-6)}`;
 
@@ -294,7 +297,7 @@ export default function App() {
     }
   };
 
-  // --- SIMPAN PEMBAYARAN IURAN WARGA KE SUPABASE (DUES_PAYMENTS & TRANSACTIONS) ---
+  // --- SIMPAN PEMBAYARAN IURAN WARGA KE SUPABASE ---
   const handleQuickPay = async (resId: string, month: string) => {
     if (!sessionToken) {
       alert('Akses Ditolak: Anda wajib login sebagai Pengurus untuk mencatat iuran!');
@@ -313,12 +316,11 @@ export default function App() {
     const input = window.prompt(`Catat pembayaran iuran ${month} untuk ${target.name} (${target.house}):`, String(remaining));
     if (!input || isNaN(Number(input)) || Number(input) <= 0) return;
 
-    const nominal = Math.min(Number(input), remaining);
+    const nominal = Math.min(Math.abs(Number(input)), remaining);
     const newPaid = currentPaid + nominal;
     const dateToday = new Date().toISOString().split('T')[0];
 
     try {
-      // 1. Simpan ke tabel dues_payments Supabase (menggunakan upsert)
       const { error: duesErr } = await supabase.from('dues_payments').upsert({
         resident_code: target.code,
         month: month,
@@ -329,7 +331,6 @@ export default function App() {
 
       if (duesErr) throw duesErr;
 
-      // 2. Simpan ke tabel transactions Supabase sebagai kas masuk
       const descText = `Iuran ${month} an. ${target.name} (${target.house})`;
       const { data: trxData, error: trxErr } = await supabase.from('transactions').insert([{
         transaction_number: `IURAN-${Date.now().toString().slice(-6)}`,
@@ -344,7 +345,6 @@ export default function App() {
 
       if (trxErr) throw trxErr;
 
-      // 3. Perbarui state lokal buku kas
       const newKasEntry = {
         id: trxData ? trxData[0].id : `trx-${Date.now()}`,
         date: dateToday,
@@ -356,7 +356,6 @@ export default function App() {
       };
       setTransactions(prev => [newKasEntry, ...prev]);
 
-      // 4. Perbarui status iuran warga di layar
       setResidents(prev => prev.map(r => {
         if (r.id === resId) {
           return {
@@ -372,7 +371,7 @@ export default function App() {
 
       showToast(`Iuran ${target.name} Rp${nominal.toLocaleString('id-ID')} tersimpan di database Supabase!`);
     } catch (err: any) {
-      alert(`Gagal menyimpan ke database Supabase:\n${err.message}\n\nPastikan Anda sudah menjalankan script SQL tabel 'dues_payments' di Langkah 1.`);
+      alert(`Gagal menyimpan ke database Supabase:\n${err.message}`);
     }
   };
 
@@ -386,7 +385,7 @@ export default function App() {
     window.open(`https://wa.me/${cleanPhone}?text=${encodeURIComponent(msg)}`, '_blank');
   };
 
-  // --- STATISTIK & ARUS KAS LENGKAP ---
+  // --- STATISTIK & KALKULASI ARUS KAS LENGKAP ---
   const stats = useMemo(() => {
     let totalIuranTerkumpul = 0;
     let iuranBulanIni = 0;
@@ -422,7 +421,7 @@ export default function App() {
 
     const totalPengeluaran = transactions
       .filter(t => t.type === 'OUT')
-      .reduce((acc, curr) => acc + curr.amount, 0);
+      .reduce((acc, curr) => acc + Math.abs(curr.amount), 0);
 
     const saldoAkhir = settings.initialCash + totalIuranTerkumpul - totalPengeluaran;
     const piutangBulanIni = targetBulanIni - iuranBulanIni;
@@ -430,7 +429,7 @@ export default function App() {
 
     const extraKasMasukBulanIni = transactions
       .filter(t => t.type === 'IN' && t.category !== 'Iuran Bulanan')
-      .reduce((acc, curr) => acc + curr.amount, 0);
+      .reduce((acc, curr) => acc + Math.abs(curr.amount), 0);
 
     const kasMasukSebulan = iuranBulanIni + extraKasMasukBulanIni;
     const kasKeluarSebulan = totalPengeluaran;
@@ -453,6 +452,13 @@ export default function App() {
     });
   }, [residents, searchQuery, selectedDawis]);
 
+  // Filter Transaksi di Dashboard Card (Semua / Masuk / Keluar)
+  const dashboardFilteredTransactions = useMemo(() => {
+    if (dashboardTrxFilter === 'IN') return transactions.filter(t => t.type === 'IN');
+    if (dashboardTrxFilter === 'OUT') return transactions.filter(t => t.type === 'OUT');
+    return transactions;
+  }, [transactions, dashboardTrxFilter]);
+
   return (
     <div className="min-h-screen bg-[#000000] text-slate-100 font-sans selection:bg-[#30D158] selection:text-black pb-28 sm:pb-20">
       
@@ -464,7 +470,7 @@ export default function App() {
         </div>
       )}
 
-      {/* 1. STATUS BAR BERSIH DENGAN JAM NYATA */}
+      {/* 1. STATUS BAR DENGAN JAM REAL-TIME */}
       <div className="sticky top-0 z-40 bg-[#000000]/90 backdrop-blur-2xl border-b border-white/[0.08] px-4 py-2.5">
         <div className="max-w-6xl mx-auto flex justify-between items-center text-xs">
           <div className="flex items-center gap-2 font-semibold tracking-tight text-white">
@@ -492,7 +498,7 @@ export default function App() {
               {settings.rtName}
             </h1>
             <p className="text-[11px] text-slate-400">
-              {sessionToken ? `Akses ${currentUser?.role.replace('_', ' ').toUpperCase()} • Pengurus Aktif` : 'Mode Warga • Transparan & Akuntabel'}
+              {sessionToken ? `Akses ${currentUser?.role.replace('_', ' ').toUpperCase()} • Pengurus Aktif` : 'Mode Warga • Dashboard Terbuka & Transparan'}
             </p>
           </div>
 
@@ -587,7 +593,7 @@ export default function App() {
               <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-4">
                 <div className="space-y-1">
                   
-                  {/* BADGE SINKRON DATABASE AKTIF */}
+                  {/* BADGE SINKRON DATABASE */}
                   <button
                     onClick={() => fetchUpdatedDataFromDb(true)}
                     disabled={isSyncingData}
@@ -661,7 +667,7 @@ export default function App() {
                 <div className="bg-[#2C2C2E]/60 border border-white/5 p-3.5 rounded-[20px] flex items-center justify-between">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">Kas Masuk (Bulan Ini)</span>
-                    <span className="text-base sm:text-lg font-black text-[#30D158]">{formatRupiah(stats.kasMasukSebulan)}</span>
+                    <span className="text-base sm:text-lg font-black text-[#30D158]">+{formatRupiah(stats.kasMasukSebulan)}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-emerald-950 text-[#30D158]">
                     <TrendingUp className="w-4 h-4" />
@@ -671,7 +677,7 @@ export default function App() {
                 <div className="bg-[#2C2C2E]/60 border border-white/5 p-3.5 rounded-[20px] flex items-center justify-between">
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">Kas Keluar (Operasional)</span>
-                    <span className="text-base sm:text-lg font-black text-rose-400">{formatRupiah(stats.kasKeluarSebulan)}</span>
+                    <span className="text-base sm:text-lg font-black text-rose-400">-{formatRupiah(stats.kasKeluarSebulan)}</span>
                   </div>
                   <div className="p-2 rounded-xl bg-rose-950 text-rose-400">
                     <TrendingDown className="w-4 h-4" />
@@ -682,7 +688,7 @@ export default function App() {
                   <div>
                     <span className="text-[10px] text-slate-400 uppercase font-bold block">Selisih Kas Bersih</span>
                     <span className={`text-base sm:text-lg font-black ${stats.netArusKasSebulan >= 0 ? 'text-white' : 'text-amber-400'}`}>
-                      {formatRupiah(stats.netArusKasSebulan)}
+                      {stats.netArusKasSebulan >= 0 ? '+' : '-'}{formatRupiah(stats.netArusKasSebulan)}
                     </span>
                   </div>
                   <div className="p-2 rounded-xl bg-slate-800 text-slate-300">
@@ -743,19 +749,67 @@ export default function App() {
               </div>
             </div>
 
-            {/* RINCIAN PENGELUARAN TERBUKA UNTUK WARGA */}
-            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl space-y-3">
-              <h3 className="font-extrabold text-sm text-white">Rincian Pengeluaran Operasional Kas Lingkungan</h3>
+            {/* --- KARTU MUTASI KAS LENGKAP: PEMASUKAN & PENGELUARAN (DIPERBARUI) --- */}
+            <div className="bg-[#1C1C1E] border border-white/10 rounded-[28px] p-5 shadow-xl space-y-4">
+              <div className="flex flex-wrap justify-between items-center gap-2">
+                <div>
+                  <h3 className="font-extrabold text-sm sm:text-base text-white">Rincian Mutasi Kas (Pemasukan & Pengeluaran)</h3>
+                  <p className="text-[11px] text-slate-400">Seluruh riwayat arus kas masuk dan beban operasional lingkungan</p>
+                </div>
+
+                {/* Filter Cepat Masuk / Keluar / Semua */}
+                <div className="flex bg-[#2C2C2E] p-1 rounded-xl border border-white/10 text-xs">
+                  <button
+                    onClick={() => setDashboardTrxFilter('ALL')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${dashboardTrxFilter === 'ALL' ? 'bg-[#30D158] text-black shadow-sm' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Semua ({transactions.length})
+                  </button>
+                  <button
+                    onClick={() => setDashboardTrxFilter('IN')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${dashboardTrxFilter === 'IN' ? 'bg-[#30D158] text-black shadow-sm' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Masuk (+)
+                  </button>
+                  <button
+                    onClick={() => setDashboardTrxFilter('OUT')}
+                    className={`px-3 py-1 rounded-lg font-bold transition ${dashboardTrxFilter === 'OUT' ? 'bg-rose-600 text-white shadow-sm' : 'text-slate-400 hover:text-white'}`}
+                  >
+                    Keluar (-)
+                  </button>
+                </div>
+              </div>
+
               <div className="divide-y divide-white/5 text-xs">
-                {transactions.filter(t => t.type === 'OUT').map((t) => (
-                  <div key={t.id} className="py-2.5 flex justify-between items-center">
-                    <div>
-                      <p className="font-bold text-white text-xs sm:text-sm">{t.desc}</p>
-                      <p className="text-[10px] text-slate-400">{t.date} • {t.category}</p>
+                {dashboardFilteredTransactions.map((t) => (
+                  <div key={t.id} className="py-3 flex justify-between items-center hover:bg-white/[0.02] transition rounded-xl px-2">
+                    <div className="space-y-0.5">
+                      <div className="flex items-center gap-2">
+                        <span className={`text-[9px] px-2 py-0.5 rounded-md font-extrabold uppercase ${
+                          t.type === 'IN' ? 'bg-[#30D158]/20 text-[#30D158] border border-[#30D158]/30' : 'bg-rose-500/20 text-rose-400 border border-rose-500/30'
+                        }`}>
+                          {t.type === 'IN' ? 'Kas Masuk' : 'Kas Keluar'}
+                        </span>
+                        <span className="text-[11px] text-slate-400 font-mono">{t.date}</span>
+                        <span className="text-[11px] text-slate-500">• {t.category}</span>
+                      </div>
+                      <p className="font-bold text-white text-xs sm:text-sm mt-0.5">{t.desc}</p>
                     </div>
-                    <span className="font-black text-rose-400 text-xs sm:text-sm">-{formatRupiah(t.amount)}</span>
+
+                    {/* FORMAT ANGKA ANTI MINUS GANDA */}
+                    <span className={`font-black text-xs sm:text-sm whitespace-nowrap pl-2 ${
+                      t.type === 'IN' ? 'text-[#30D158]' : 'text-rose-400'
+                    }`}>
+                      {t.type === 'IN' ? '+' : '-'}{formatRupiah(t.amount)}
+                    </span>
                   </div>
                 ))}
+
+                {dashboardFilteredTransactions.length === 0 && (
+                  <div className="py-6 text-center text-slate-500 text-xs">
+                    Tidak ada transaksi dalam kategori ini.
+                  </div>
+                )}
               </div>
             </div>
 
